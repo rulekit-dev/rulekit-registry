@@ -155,6 +155,38 @@ func requireAdmin(next http.Handler) http.Handler {
 	return requireRole(model.RoleAdmin, next)
 }
 
+// corsMiddleware adds CORS headers based on a comma-separated allowlist.
+// Pass "*" to allow all origins.
+func corsMiddleware(origins string, next http.Handler) http.Handler {
+	allowed := make(map[string]bool)
+	wildcard := false
+	for _, o := range strings.Split(origins, ",") {
+		o = strings.TrimSpace(o)
+		if o == "*" {
+			wildcard = true
+			break
+		}
+		if o != "" {
+			allowed[o] = true
+		}
+	}
+
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		origin := r.Header.Get("Origin")
+		if origin != "" && (wildcard || allowed[origin]) {
+			w.Header().Set("Access-Control-Allow-Origin", origin)
+			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
+			w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type")
+			w.Header().Set("Access-Control-Max-Age", "86400")
+		}
+		if r.Method == http.MethodOptions {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
 func recoveryMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		defer func() {

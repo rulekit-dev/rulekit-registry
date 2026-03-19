@@ -40,6 +40,9 @@ type Config struct {
 	SMTPFrom     string // RULEKIT_SMTP_FROM
 	SMTPUseTLS   bool   // RULEKIT_SMTP_USE_TLS: use implicit TLS (port 465) instead of STARTTLS
 
+	// CORS
+	CORSOrigins string // RULEKIT_CORS_ORIGINS: comma-separated allowed origins, "*" for all
+
 	// Blob store
 	BlobStore     string // RULEKIT_BLOB_STORE: "fs" (default) | "s3"
 	BlobDir       string // RULEKIT_BLOB_DIR: dir for fs backend (default: {DataDir}/blobs)
@@ -69,6 +72,8 @@ func Load() (*Config, error) {
 	flag.StringVar(&cfg.SMTPPassword, "smtp-password", env("RULEKIT_SMTP_PASSWORD", ""), "SMTP password (env: RULEKIT_SMTP_PASSWORD)")
 	flag.StringVar(&cfg.SMTPFrom, "smtp-from", env("RULEKIT_SMTP_FROM", ""), "SMTP from address (env: RULEKIT_SMTP_FROM)")
 	smtpTLS := flag.Bool("smtp-use-tls", envBool("RULEKIT_SMTP_USE_TLS", false), "use implicit TLS for SMTP (env: RULEKIT_SMTP_USE_TLS)")
+
+	flag.StringVar(&cfg.CORSOrigins, "cors-origins", env("RULEKIT_CORS_ORIGINS", ""), "allowed CORS origins, comma-separated or * (env: RULEKIT_CORS_ORIGINS)")
 
 	flag.StringVar(&cfg.BlobStore, "blob-store", env("RULEKIT_BLOB_STORE", "fs"), "blob store backend: fs or s3 (env: RULEKIT_BLOB_STORE)")
 	flag.StringVar(&cfg.BlobDir, "blob-dir", env("RULEKIT_BLOB_DIR", ""), "directory for fs blob store (env: RULEKIT_BLOB_DIR)")

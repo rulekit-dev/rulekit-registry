@@ -25,7 +25,11 @@ func NewRouter(h *handler.RulesetHandler, auth *handler.AuthHandler, admin *hand
 		json.NewEncoder(w).Encode(map[string]string{"status": "ok"}) //nolint:errcheck
 	})
 
-	return loggingMiddleware(recoveryMiddleware(mux))
+	var root http.Handler = mux
+	if cfg.CORSOrigins != "" {
+		root = corsMiddleware(cfg.CORSOrigins, root)
+	}
+	return loggingMiddleware(recoveryMiddleware(root))
 }
 
 func registerLegacyRoutes(mux *http.ServeMux, h *handler.RulesetHandler, apiKey string) {
