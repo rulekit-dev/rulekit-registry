@@ -9,9 +9,14 @@ import (
 
 	"github.com/rulekit/rulekit-registry/internal/api"
 	fsblobstore "github.com/rulekit/rulekit-registry/internal/blobstore/fs"
+	"github.com/rulekit/rulekit-registry/internal/config"
 	"github.com/rulekit/rulekit-registry/internal/model"
 	"github.com/rulekit/rulekit-registry/internal/store/sqlite"
 )
+
+func legacyCfg(apiKey string) *config.Config {
+	return &config.Config{AuthMode: config.AuthModeNone, APIKey: apiKey}
+}
 
 func newTestServer(t *testing.T) *httptest.Server {
 	t.Helper()
@@ -33,7 +38,7 @@ func newTestServer(t *testing.T) *httptest.Server {
 	})
 
 	h := api.NewHandler(st, blobs)
-	return httptest.NewServer(api.NewRouter(h, ""))
+	return httptest.NewServer(api.NewRouter(h, nil, nil, st, legacyCfg("")))
 }
 
 func mustJSON(t *testing.T, v any) *bytes.Buffer {
@@ -665,7 +670,7 @@ func TestAuthRequiredWhenKeySet(t *testing.T) {
 	blobs, _ := fsblobstore.New(dir + "/blobs")
 	t.Cleanup(func() { st.Close(); blobs.Close() })
 
-	srv := httptest.NewServer(api.NewRouter(api.NewHandler(st, blobs), "secret-key"))
+	srv := httptest.NewServer(api.NewRouter(api.NewHandler(st, blobs), nil, nil, st, legacyCfg("secret-key")))
 	defer srv.Close()
 
 	// No token → 401
@@ -709,7 +714,7 @@ func TestHealthzSkipsAuth(t *testing.T) {
 	blobs, _ := fsblobstore.New(dir + "/blobs")
 	t.Cleanup(func() { st.Close(); blobs.Close() })
 
-	srv := httptest.NewServer(api.NewRouter(api.NewHandler(st, blobs), "secret-key"))
+	srv := httptest.NewServer(api.NewRouter(api.NewHandler(st, blobs), nil, nil, st, legacyCfg("secret-key")))
 	defer srv.Close()
 
 	resp, err := http.Get(srv.URL + "/healthz")

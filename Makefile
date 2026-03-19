@@ -1,31 +1,27 @@
-.PHONY: build test lint run docker-build docker-up docker-down
+.PHONY: up down build logs test test-postgres
 
+# Start the registry (reads .env for all configuration).
+# Copy .env.example to .env and adjust before running.
+up:
+	docker compose up --build
+
+# Stop and remove containers.
+down:
+	docker compose down
+
+# Build the Docker image without starting.
 build:
-	go build ./...
+	docker compose build
 
+# Tail registry logs.
+logs:
+	docker compose logs -f registry
+
+# Run tests locally (SQLite only, no Docker required).
 test:
 	go test ./...
 
+# Run tests against a live PostgreSQL instance.
+# Usage: make test-postgres RULEKIT_DATABASE_URL=postgres://...
 test-postgres:
 	RULEKIT_DATABASE_URL=$(RULEKIT_DATABASE_URL) go test ./...
-
-lint:
-	go vet ./...
-
-run:
-	go run ./cmd/rulekitd
-
-docker-build:
-	docker build -t rulekit-registry .
-
-docker-up:
-	docker compose up
-
-docker-up-postgres:
-	docker compose --profile postgres up
-
-docker-up-postgres-s3:
-	docker compose --profile postgres-s3 up
-
-docker-down:
-	docker compose down

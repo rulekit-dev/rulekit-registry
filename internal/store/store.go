@@ -34,5 +34,31 @@ type Store interface {
 	CreateVersion(ctx context.Context, v *model.Version) error
 	NextVersionNumber(ctx context.Context, namespace, key string) (int, error)
 
+	// User operations
+	CreateUser(ctx context.Context, u *model.User) error
+	GetUserByEmail(ctx context.Context, email string) (*model.User, error)
+	GetUserByID(ctx context.Context, id string) (*model.User, error)
+	UpdateUserLastLogin(ctx context.Context, userID string) error
+	ListUsers(ctx context.Context, limit, offset int) ([]*model.User, error)
+	DeleteUser(ctx context.Context, userID string) error
+
+	// OTP operations
+	CreateOTPCode(ctx context.Context, otp *model.OTPCode) error
+	GetUnusedOTPCode(ctx context.Context, userID string) (*model.OTPCode, error)
+	MarkOTPUsed(ctx context.Context, otpID string) error
+	DeleteExpiredOTPs(ctx context.Context) error
+
+	// API token operations
+	CreateAPIToken(ctx context.Context, t *model.APIToken) error
+	GetAPITokenByHash(ctx context.Context, tokenHash string) (*model.APIToken, error)
+	ListAPITokens(ctx context.Context, userID string) ([]*model.APIToken, error)
+	RevokeAPIToken(ctx context.Context, tokenID string) error
+
+	// User role operations
+	UpsertUserRole(ctx context.Context, ur *model.UserRole) error
+	GetUserRole(ctx context.Context, userID, namespace string) (*model.UserRole, error)
+	ListUserRoles(ctx context.Context, userID string) ([]*model.UserRole, error)
+	DeleteUserRole(ctx context.Context, userID, namespace string) error
+
 	Close() error
 }
