@@ -1,9 +1,11 @@
 package api
 
 import (
+	"crypto/subtle"
 	"log/slog"
 	"net/http"
 	"runtime/debug"
+	"strings"
 	"time"
 )
 
@@ -28,6 +30,17 @@ func loggingMiddleware(next http.Handler) http.Handler {
 			"status", rw.status,
 			"duration_ms", time.Since(start).Milliseconds(),
 		)
+	})
+}
+
+func authMiddleware(apiKey string, next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		token := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
+		if subtle.ConstantTimeCompare([]byte(token), []byte(apiKey)) != 1 {
+			writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "invalid or missing API key")
+			return
+		}
+		next.ServeHTTP(w, r)
 	})
 }
 

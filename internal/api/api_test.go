@@ -33,7 +33,7 @@ func newTestServer(t *testing.T) *httptest.Server {
 	})
 
 	h := api.NewHandler(st, blobs)
-	return httptest.NewServer(api.NewRouter(h))
+	return httptest.NewServer(api.NewRouter(h, ""))
 }
 
 func mustJSON(t *testing.T, v any) *bytes.Buffer {
@@ -654,6 +654,71 @@ func TestGetLatestBundle(t *testing.T) {
 	}
 	if ct := resp.Header.Get("Content-Type"); ct != "application/zip" {
 		t.Errorf("Content-Type: got %q, want application/zip", ct)
+	}
+}
+
+// --- Auth ---
+
+func TestAuthRequiredWhenKeySet(t *testing.T) {
+	dir := t.TempDir()
+	st, _ := sqlite.New(dir)
+	blobs, _ := fsblobstore.New(dir + "/blobs")
+	t.Cleanup(func() { st.Close(); blobs.Close() })
+
+	srv := httptest.NewServer(api.NewRouter(api.NewHandler(st, blobs), "secret-key"))
+	defer srv.Close()
+
+	// No token → 401
+	resp, err := http.Get(srv.URL + "/v1/rulesets")
+	if err != nil {
+		t.Fatalf("GET: %v", err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Errorf("no token: got %d, want 401", resp.StatusCode)
+	}
+
+	// Wrong token → 401
+	req, _ := http.NewRequest(http.MethodGet, srv.URL+"/v1/rulesets", nil)
+	req.Header.Set("Authorization", "Bearer wrong-key")
+	resp2, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("GET with wrong token: %v", err)
+	}
+	resp2.Body.Close()
+	if resp2.StatusCode != http.StatusUnauthorized {
+		t.Errorf("wrong token: got %d, want 401", resp2.StatusCode)
+	}
+
+	// Correct token → 200
+	req2, _ := http.NewRequest(http.MethodGet, srv.URL+"/v1/rulesets", nil)
+	req2.Header.Set("Authorization", "Bearer secret-key")
+	resp3, err := http.DefaultClient.Do(req2)
+	if err != nil {
+		t.Fatalf("GET with correct token: %v", err)
+	}
+	resp3.Body.Close()
+	if resp3.StatusCode != http.StatusOK {
+		t.Errorf("correct token: got %d, want 200", resp3.StatusCode)
+	}
+}
+
+func TestHealthzSkipsAuth(t *testing.T) {
+	dir := t.TempDir()
+	st, _ := sqlite.New(dir)
+	blobs, _ := fsblobstore.New(dir + "/blobs")
+	t.Cleanup(func() { st.Close(); blobs.Close() })
+
+	srv := httptest.NewServer(api.NewRouter(api.NewHandler(st, blobs), "secret-key"))
+	defer srv.Close()
+
+	resp, err := http.Get(srv.URL + "/healthz")
+	if err != nil {
+		t.Fatalf("GET /healthz: %v", err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("healthz with auth enabled: got %d, want 200", resp.StatusCode)
 	}
 }
 

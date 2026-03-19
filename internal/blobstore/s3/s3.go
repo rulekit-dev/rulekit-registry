@@ -8,6 +8,7 @@ import (
 	"io"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/aws/retry"
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
@@ -40,6 +41,11 @@ func New(cfg Config) (*S3BlobStore, error) {
 
 	loadOpts := []func(*awsconfig.LoadOptions) error{
 		awsconfig.WithRegion(region),
+		awsconfig.WithRetryer(func() aws.Retryer {
+			return retry.NewStandard(func(o *retry.StandardOptions) {
+				o.MaxAttempts = 3
+			})
+		}),
 	}
 	if cfg.AccessKeyID != "" {
 		loadOpts = append(loadOpts, awsconfig.WithCredentialsProvider(
@@ -106,6 +112,17 @@ func (b *S3BlobStore) get(ctx context.Context, objKey string) ([]byte, error) {
 	return data, nil
 }
 
+func (b *S3BlobStore) del(ctx context.Context, objKey string) error {
+	_, err := b.client.DeleteObject(ctx, &s3.DeleteObjectInput{
+		Bucket: aws.String(b.bucket),
+		Key:    aws.String(objKey),
+	})
+	if err != nil {
+		return fmt.Errorf("blobstore/s3: delete %s: %w", objKey, err)
+	}
+	return nil
+}
+
 func (b *S3BlobStore) PutDSL(ctx context.Context, namespace, key string, version int, data []byte) error {
 	return b.put(ctx, b.dslKey(namespace, key, version), "application/json", data)
 }
@@ -114,12 +131,20 @@ func (b *S3BlobStore) GetDSL(ctx context.Context, namespace, key string, version
 	return b.get(ctx, b.dslKey(namespace, key, version))
 }
 
+func (b *S3BlobStore) DeleteDSL(ctx context.Context, namespace, key string, version int) error {
+	return b.del(ctx, b.dslKey(namespace, key, version))
+}
+
 func (b *S3BlobStore) PutBundle(ctx context.Context, namespace, key string, version int, data []byte) error {
 	return b.put(ctx, b.bundleKey(namespace, key, version), "application/zip", data)
 }
 
 func (b *S3BlobStore) GetBundle(ctx context.Context, namespace, key string, version int) ([]byte, error) {
 	return b.get(ctx, b.bundleKey(namespace, key, version))
+}
+
+func (b *S3BlobStore) DeleteBundle(ctx context.Context, namespace, key string, version int) error {
+	return b.del(ctx, b.bundleKey(namespace, key, version))
 }
 
 func (b *S3BlobStore) Close() error { return nil }

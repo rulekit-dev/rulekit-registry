@@ -202,12 +202,16 @@ func (h *Handler) GetDraft(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, draft)
 }
 
+const maxDraftBodyBytes = 1 << 20 // 1 MiB
+
 func (h *Handler) UpsertDraft(w http.ResponseWriter, r *http.Request) {
 	key := r.PathValue("key")
 	ns, ok := namespaceParam(w, r)
 	if !ok {
 		return
 	}
+
+	r.Body = http.MaxBytesReader(w, r.Body, maxDraftBodyBytes)
 
 	if _, err := h.store.GetRuleset(r.Context(), ns, key); err != nil {
 		if errors.Is(err, store.ErrNotFound) {
@@ -222,6 +226,12 @@ func (h *Handler) UpsertDraft(w http.ResponseWriter, r *http.Request) {
 		DSL json.RawMessage `json:"dsl"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		var maxErr *http.MaxBytesError
+		if errors.As(err, &maxErr) {
+			writeError(w, http.StatusRequestEntityTooLarge, "REQUEST_TOO_LARGE",
+				"request body exceeds 1 MiB limit")
+			return
+		}
 		writeError(w, http.StatusBadRequest, "BAD_REQUEST", "invalid JSON body")
 		return
 	}
@@ -353,6 +363,7 @@ func (h *Handler) Publish(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.blobs.PutBundle(r.Context(), ns, key, versionNum, bundleBytes); err != nil {
+		h.blobs.DeleteDSL(r.Context(), ns, key, versionNum) //nolint:errcheck
 		writeError(w, http.StatusInternalServerError, "INTERNAL", "failed to store bundle blob")
 		return
 	}
@@ -367,6 +378,8 @@ func (h *Handler) Publish(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.store.CreateVersion(r.Context(), v); err != nil {
+		h.blobs.DeleteDSL(r.Context(), ns, key, versionNum)    //nolint:errcheck
+		h.blobs.DeleteBundle(r.Context(), ns, key, versionNum) //nolint:errcheck
 		if errors.Is(err, store.ErrVersionImmutable) {
 			writeError(w, http.StatusConflict, "VERSION_IMMUTABLE", "version already exists")
 			return

@@ -56,6 +56,16 @@ func (b *FSBlobStore) put(path string, data []byte) error {
 	return nil
 }
 
+func (b *FSBlobStore) delete(path string) error {
+	if err := os.Remove(path); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil
+		}
+		return fmt.Errorf("blobstore/fs: delete: %w", err)
+	}
+	return nil
+}
+
 func (b *FSBlobStore) get(path string) ([]byte, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -75,12 +85,20 @@ func (b *FSBlobStore) GetDSL(ctx context.Context, namespace, key string, version
 	return b.get(b.dslPath(namespace, key, version))
 }
 
+func (b *FSBlobStore) DeleteDSL(ctx context.Context, namespace, key string, version int) error {
+	return b.delete(b.dslPath(namespace, key, version))
+}
+
 func (b *FSBlobStore) PutBundle(ctx context.Context, namespace, key string, version int, data []byte) error {
 	return b.put(b.bundlePath(namespace, key, version), data)
 }
 
 func (b *FSBlobStore) GetBundle(ctx context.Context, namespace, key string, version int) ([]byte, error) {
 	return b.get(b.bundlePath(namespace, key, version))
+}
+
+func (b *FSBlobStore) DeleteBundle(ctx context.Context, namespace, key string, version int) error {
+	return b.delete(b.bundlePath(namespace, key, version))
 }
 
 func (b *FSBlobStore) Close() error { return nil }

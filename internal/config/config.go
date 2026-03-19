@@ -13,6 +13,9 @@ type Config struct {
 	Store       string // RULEKIT_STORE     (sqlite | postgres)
 	DatabaseURL string // RULEKIT_DATABASE_URL
 
+	// Auth
+	APIKey string // RULEKIT_API_KEY: if set, all /v1/* requests require Bearer token
+
 	// Blob store
 	BlobStore     string // RULEKIT_BLOB_STORE: "fs" (default) | "s3"
 	BlobDir       string // RULEKIT_BLOB_DIR: dir for fs backend (default: {DataDir}/blobs)
@@ -30,6 +33,7 @@ func Load() (*Config, error) {
 	flag.StringVar(&cfg.DataDir, "data-dir", env("RULEKIT_DATA_DIR", "./data"), "data directory for SQLite (env: RULEKIT_DATA_DIR)")
 	flag.StringVar(&cfg.Store, "store", env("RULEKIT_STORE", "sqlite"), "storage backend: sqlite or postgres (env: RULEKIT_STORE)")
 	flag.StringVar(&cfg.DatabaseURL, "database-url", env("RULEKIT_DATABASE_URL", ""), "PostgreSQL DSN (env: RULEKIT_DATABASE_URL)")
+	flag.StringVar(&cfg.APIKey, "api-key", env("RULEKIT_API_KEY", ""), "API key for bearer token auth on /v1/* routes (env: RULEKIT_API_KEY)")
 
 	flag.StringVar(&cfg.BlobStore, "blob-store", env("RULEKIT_BLOB_STORE", "fs"), "blob store backend: fs or s3 (env: RULEKIT_BLOB_STORE)")
 	flag.StringVar(&cfg.BlobDir, "blob-dir", env("RULEKIT_BLOB_DIR", ""), "directory for fs blob store (env: RULEKIT_BLOB_DIR)")
