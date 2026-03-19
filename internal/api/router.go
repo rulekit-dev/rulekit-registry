@@ -11,8 +11,10 @@ func NewRouter(h *Handler) http.Handler {
 	mux.HandleFunc("GET /v1/rulesets", h.ListRulesets)
 	mux.HandleFunc("POST /v1/rulesets", h.CreateRuleset)
 	mux.HandleFunc("GET /v1/rulesets/{key}", h.GetRuleset)
+	mux.HandleFunc("DELETE /v1/rulesets/{key}", h.DeleteRuleset)
 	mux.HandleFunc("GET /v1/rulesets/{key}/draft", h.GetDraft)
 	mux.HandleFunc("PUT /v1/rulesets/{key}/draft", h.UpsertDraft)
+	mux.HandleFunc("DELETE /v1/rulesets/{key}/draft", h.DeleteDraft)
 	mux.HandleFunc("POST /v1/rulesets/{key}/publish", h.Publish)
 	mux.HandleFunc("GET /v1/rulesets/{key}/versions", h.ListVersions)
 

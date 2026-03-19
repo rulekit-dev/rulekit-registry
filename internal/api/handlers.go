@@ -33,10 +33,14 @@ func (h *Handler) getPublishMu(namespace, key string) *sync.Mutex {
 	return v.(*sync.Mutex)
 }
 
-var keyPattern = regexp.MustCompile(`^[a-z0-9_-]+$`)
+var identPattern = regexp.MustCompile(`^[a-z0-9_-]+$`)
 
 func validKey(s string) bool {
-	return len(s) > 0 && len(s) <= 128 && keyPattern.MatchString(s)
+	return len(s) > 0 && len(s) <= 128 && identPattern.MatchString(s)
+}
+
+func validNamespace(s string) bool {
+	return len(s) > 0 && len(s) <= 128 && identPattern.MatchString(s)
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {
@@ -51,16 +55,37 @@ func writeError(w http.ResponseWriter, status int, code, message string) {
 	})
 }
 
-func namespace(r *http.Request) string {
-	if ns := r.URL.Query().Get("namespace"); ns != "" {
-		return ns
+func namespaceParam(w http.ResponseWriter, r *http.Request) (string, bool) {
+	ns := r.URL.Query().Get("namespace")
+	if ns == "" {
+		return "default", true
 	}
-	return "default"
+	if !validNamespace(ns) {
+		writeError(w, http.StatusBadRequest, "INVALID_NAMESPACE",
+			"namespace must be non-empty, at most 128 characters, and match [a-z0-9_-]")
+		return "", false
+	}
+	return ns, true
+}
+
+func pageParams(r *http.Request) (limit, offset int) {
+	limit = 50
+	if v, err := strconv.Atoi(r.URL.Query().Get("limit")); err == nil && v > 0 && v <= 200 {
+		limit = v
+	}
+	if v, err := strconv.Atoi(r.URL.Query().Get("offset")); err == nil && v >= 0 {
+		offset = v
+	}
+	return limit, offset
 }
 
 func (h *Handler) ListRulesets(w http.ResponseWriter, r *http.Request) {
-	ns := namespace(r)
-	rulesets, err := h.store.ListRulesets(r.Context(), ns)
+	ns, ok := namespaceParam(w, r)
+	if !ok {
+		return
+	}
+	limit, offset := pageParams(r)
+	rulesets, err := h.store.ListRulesets(r.Context(), ns, limit, offset)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "INTERNAL", "failed to list rulesets")
 		return
@@ -84,6 +109,11 @@ func (h *Handler) CreateRuleset(w http.ResponseWriter, r *http.Request) {
 	}
 	if body.Namespace == "" {
 		body.Namespace = "default"
+	}
+	if !validNamespace(body.Namespace) {
+		writeError(w, http.StatusBadRequest, "INVALID_NAMESPACE",
+			"namespace must be non-empty, at most 128 characters, and match [a-z0-9_-]")
+		return
 	}
 	if !validKey(body.Key) {
 		writeError(w, http.StatusBadRequest, "INVALID_KEY",
@@ -115,7 +145,10 @@ func (h *Handler) CreateRuleset(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) GetRuleset(w http.ResponseWriter, r *http.Request) {
 	key := r.PathValue("key")
-	ns := namespace(r)
+	ns, ok := namespaceParam(w, r)
+	if !ok {
+		return
+	}
 
 	rs, err := h.store.GetRuleset(r.Context(), ns, key)
 	if err != nil {
@@ -130,9 +163,31 @@ func (h *Handler) GetRuleset(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, rs)
 }
 
+func (h *Handler) DeleteRuleset(w http.ResponseWriter, r *http.Request) {
+	key := r.PathValue("key")
+	ns, ok := namespaceParam(w, r)
+	if !ok {
+		return
+	}
+
+	if err := h.store.DeleteRuleset(r.Context(), ns, key); err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			writeError(w, http.StatusNotFound, "NOT_FOUND", "ruleset not found")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "INTERNAL", "failed to delete ruleset")
+		return
+	}
+
+	w.WriteHeader(http.StatusNoContent)
+}
+
 func (h *Handler) GetDraft(w http.ResponseWriter, r *http.Request) {
 	key := r.PathValue("key")
-	ns := namespace(r)
+	ns, ok := namespaceParam(w, r)
+	if !ok {
+		return
+	}
 
 	draft, err := h.store.GetDraft(r.Context(), ns, key)
 	if err != nil {
@@ -149,7 +204,10 @@ func (h *Handler) GetDraft(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) UpsertDraft(w http.ResponseWriter, r *http.Request) {
 	key := r.PathValue("key")
-	ns := namespace(r)
+	ns, ok := namespaceParam(w, r)
+	if !ok {
+		return
+	}
 
 	if _, err := h.store.GetRuleset(r.Context(), ns, key); err != nil {
 		if errors.Is(err, store.ErrNotFound) {
@@ -199,9 +257,31 @@ func (h *Handler) UpsertDraft(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, draft)
 }
 
+func (h *Handler) DeleteDraft(w http.ResponseWriter, r *http.Request) {
+	key := r.PathValue("key")
+	ns, ok := namespaceParam(w, r)
+	if !ok {
+		return
+	}
+
+	if err := h.store.DeleteDraft(r.Context(), ns, key); err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			writeError(w, http.StatusNotFound, "NOT_FOUND", "draft not found")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "INTERNAL", "failed to delete draft")
+		return
+	}
+
+	w.WriteHeader(http.StatusNoContent)
+}
+
 func (h *Handler) Publish(w http.ResponseWriter, r *http.Request) {
 	key := r.PathValue("key")
-	ns := namespace(r)
+	ns, ok := namespaceParam(w, r)
+	if !ok {
+		return
+	}
 
 	if _, err := h.store.GetRuleset(r.Context(), ns, key); err != nil {
 		if errors.Is(err, store.ErrNotFound) {
@@ -235,6 +315,13 @@ func (h *Handler) Publish(w http.ResponseWriter, r *http.Request) {
 	}
 
 	checksum := dsl.Checksum(dslBytes)
+
+	if latest, err := h.store.GetLatestVersion(r.Context(), ns, key); err == nil {
+		if latest.Checksum == checksum {
+			writeError(w, http.StatusConflict, "NO_CHANGES", "draft is identical to the latest published version")
+			return
+		}
+	}
 
 	mu := h.getPublishMu(ns, key)
 	mu.Lock()
@@ -295,9 +382,12 @@ func (h *Handler) Publish(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) ListVersions(w http.ResponseWriter, r *http.Request) {
 	key := r.PathValue("key")
-	ns := namespace(r)
-
-	versions, err := h.store.ListVersions(r.Context(), ns, key)
+	ns, ok := namespaceParam(w, r)
+	if !ok {
+		return
+	}
+	limit, offset := pageParams(r)
+	versions, err := h.store.ListVersions(r.Context(), ns, key, limit, offset)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "INTERNAL", "failed to list versions")
 		return
@@ -310,7 +400,10 @@ func (h *Handler) ListVersions(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) GetVersion(w http.ResponseWriter, r *http.Request) {
 	key := r.PathValue("key")
-	ns := namespace(r)
+	ns, ok := namespaceParam(w, r)
+	if !ok {
+		return
+	}
 	versionStr := r.PathValue("version")
 
 	versionNum, err := strconv.Atoi(versionStr)
@@ -345,7 +438,10 @@ func (h *Handler) GetVersion(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) GetLatestVersion(w http.ResponseWriter, r *http.Request) {
 	key := r.PathValue("key")
-	ns := namespace(r)
+	ns, ok := namespaceParam(w, r)
+	if !ok {
+		return
+	}
 
 	v, err := h.store.GetLatestVersion(r.Context(), ns, key)
 	if err != nil {
@@ -373,7 +469,10 @@ func (h *Handler) GetLatestVersion(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) GetVersionBundle(w http.ResponseWriter, r *http.Request) {
 	key := r.PathValue("key")
-	ns := namespace(r)
+	ns, ok := namespaceParam(w, r)
+	if !ok {
+		return
+	}
 	versionStr := r.PathValue("version")
 
 	versionNum, err := strconv.Atoi(versionStr)
@@ -411,7 +510,10 @@ func (h *Handler) GetVersionBundle(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) GetLatestBundle(w http.ResponseWriter, r *http.Request) {
 	key := r.PathValue("key")
-	ns := namespace(r)
+	ns, ok := namespaceParam(w, r)
+	if !ok {
+		return
+	}
 
 	v, err := h.store.GetLatestVersion(r.Context(), ns, key)
 	if err != nil {

@@ -65,10 +65,10 @@ func New(dataDir string) (*SQLiteStore, error) {
 
 func (s *SQLiteStore) Close() error { return s.db.Close() }
 
-func (s *SQLiteStore) ListRulesets(ctx context.Context, namespace string) ([]*model.Ruleset, error) {
+func (s *SQLiteStore) ListRulesets(ctx context.Context, namespace string, limit, offset int) ([]*model.Ruleset, error) {
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT namespace, key, name, description, created_at, updated_at
-         FROM rulesets WHERE namespace = ? ORDER BY key`, namespace)
+         FROM rulesets WHERE namespace = ? ORDER BY key LIMIT ? OFFSET ?`, namespace, limit, offset)
 	if err != nil {
 		return nil, err
 	}
@@ -150,11 +150,43 @@ func (s *SQLiteStore) UpsertDraft(ctx context.Context, d *model.Draft) error {
 	return err
 }
 
-func (s *SQLiteStore) ListVersions(ctx context.Context, namespace, key string) ([]*model.Version, error) {
+func (s *SQLiteStore) DeleteDraft(ctx context.Context, namespace, key string) error {
+	res, err := s.db.ExecContext(ctx,
+		`DELETE FROM drafts WHERE namespace = ? AND ruleset_key = ?`, namespace, key)
+	if err != nil {
+		return err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return store.ErrNotFound
+	}
+	return nil
+}
+
+func (s *SQLiteStore) DeleteRuleset(ctx context.Context, namespace, key string) error {
+	res, err := s.db.ExecContext(ctx,
+		`DELETE FROM rulesets WHERE namespace = ? AND key = ?`, namespace, key)
+	if err != nil {
+		return err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return store.ErrNotFound
+	}
+	return nil
+}
+
+func (s *SQLiteStore) ListVersions(ctx context.Context, namespace, key string, limit, offset int) ([]*model.Version, error) {
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT namespace, ruleset_key, version, checksum, created_at
-         FROM versions WHERE namespace = ? AND ruleset_key = ? ORDER BY version ASC`,
-		namespace, key)
+         FROM versions WHERE namespace = ? AND ruleset_key = ? ORDER BY version ASC LIMIT ? OFFSET ?`,
+		namespace, key, limit, offset)
 	if err != nil {
 		return nil, err
 	}

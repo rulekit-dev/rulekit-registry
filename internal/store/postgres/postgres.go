@@ -62,10 +62,10 @@ func New(databaseURL string) (*PostgresStore, error) {
 
 func (s *PostgresStore) Close() error { return s.db.Close() }
 
-func (s *PostgresStore) ListRulesets(ctx context.Context, namespace string) ([]*model.Ruleset, error) {
+func (s *PostgresStore) ListRulesets(ctx context.Context, namespace string, limit, offset int) ([]*model.Ruleset, error) {
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT namespace, key, name, description, created_at, updated_at
-         FROM rulesets WHERE namespace = $1 ORDER BY key`, namespace)
+         FROM rulesets WHERE namespace = $1 ORDER BY key LIMIT $2 OFFSET $3`, namespace, limit, offset)
 	if err != nil {
 		return nil, err
 	}
@@ -144,11 +144,43 @@ func (s *PostgresStore) UpsertDraft(ctx context.Context, d *model.Draft) error {
 	return err
 }
 
-func (s *PostgresStore) ListVersions(ctx context.Context, namespace, key string) ([]*model.Version, error) {
+func (s *PostgresStore) DeleteDraft(ctx context.Context, namespace, key string) error {
+	res, err := s.db.ExecContext(ctx,
+		`DELETE FROM drafts WHERE namespace = $1 AND ruleset_key = $2`, namespace, key)
+	if err != nil {
+		return err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return store.ErrNotFound
+	}
+	return nil
+}
+
+func (s *PostgresStore) DeleteRuleset(ctx context.Context, namespace, key string) error {
+	res, err := s.db.ExecContext(ctx,
+		`DELETE FROM rulesets WHERE namespace = $1 AND key = $2`, namespace, key)
+	if err != nil {
+		return err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return store.ErrNotFound
+	}
+	return nil
+}
+
+func (s *PostgresStore) ListVersions(ctx context.Context, namespace, key string, limit, offset int) ([]*model.Version, error) {
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT namespace, ruleset_key, version, checksum, created_at
-         FROM versions WHERE namespace = $1 AND ruleset_key = $2 ORDER BY version ASC`,
-		namespace, key)
+         FROM versions WHERE namespace = $1 AND ruleset_key = $2 ORDER BY version ASC LIMIT $3 OFFSET $4`,
+		namespace, key, limit, offset)
 	if err != nil {
 		return nil, err
 	}

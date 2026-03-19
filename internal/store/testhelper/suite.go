@@ -100,7 +100,7 @@ func RunSuite(t *testing.T, newStore func(t *testing.T) store.Store) {
 			t.Fatalf("CreateRuleset other-ns: %v", err)
 		}
 
-		list, err := s.ListRulesets(ctx, ns)
+		list, err := s.ListRulesets(ctx, ns, 50, 0)
 		if err != nil {
 			t.Fatalf("ListRulesets: %v", err)
 		}
@@ -117,7 +117,7 @@ func RunSuite(t *testing.T, newStore func(t *testing.T) store.Store) {
 		}
 
 		// Different namespace should be isolated.
-		otherList, err := s.ListRulesets(ctx, "other-ns")
+		otherList, err := s.ListRulesets(ctx, "other-ns", 50, 0)
 		if err != nil {
 			t.Fatalf("ListRulesets other-ns: %v", err)
 		}
@@ -126,7 +126,7 @@ func RunSuite(t *testing.T, newStore func(t *testing.T) store.Store) {
 		}
 
 		// Namespace with no rulesets returns empty slice (not error).
-		emptyList, err := s.ListRulesets(ctx, "empty-ns")
+		emptyList, err := s.ListRulesets(ctx, "empty-ns", 50, 0)
 		if err != nil {
 			t.Fatalf("ListRulesets empty-ns: %v", err)
 		}
@@ -264,7 +264,7 @@ func RunSuite(t *testing.T, newStore func(t *testing.T) store.Store) {
 		}
 
 		// ListVersions returns [v1, v2] in ascending order.
-		versions, err := s.ListVersions(ctx, ns, key)
+		versions, err := s.ListVersions(ctx, ns, key, 50, 0)
 		if err != nil {
 			t.Fatalf("ListVersions: %v", err)
 		}
@@ -374,7 +374,7 @@ func RunSuite(t *testing.T, newStore func(t *testing.T) store.Store) {
 
 		// List results are namespace-scoped.
 		for _, ns := range []string{"ns-alpha", "ns-beta"} {
-			list, err := s.ListRulesets(ctx, ns)
+			list, err := s.ListRulesets(ctx, ns, 50, 0)
 			if err != nil {
 				t.Fatalf("ListRulesets ns=%q: %v", ns, err)
 			}
@@ -400,7 +400,7 @@ func RunSuite(t *testing.T, newStore func(t *testing.T) store.Store) {
 
 		// Each namespace has exactly one version.
 		for _, ns := range []string{"ns-alpha", "ns-beta"} {
-			versions, err := s.ListVersions(ctx, ns, key)
+			versions, err := s.ListVersions(ctx, ns, key, 50, 0)
 			if err != nil {
 				t.Fatalf("ListVersions ns=%q: %v", ns, err)
 			}
