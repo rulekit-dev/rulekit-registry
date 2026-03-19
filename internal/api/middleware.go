@@ -1,7 +1,6 @@
 package api
 
 import (
-	"context"
 	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/hex"
@@ -12,9 +11,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/rulekit/rulekit-registry/internal/jwtutil"
-	"github.com/rulekit/rulekit-registry/internal/model"
-	"github.com/rulekit/rulekit-registry/internal/store"
+	"github.com/rulekit-dev/rulekit-registry/internal/api/handler"
+	"github.com/rulekit-dev/rulekit-registry/internal/jwtutil"
+	"github.com/rulekit-dev/rulekit-registry/internal/model"
+	"github.com/rulekit-dev/rulekit-registry/internal/store"
 )
 
 type responseWriter struct {
@@ -46,7 +46,7 @@ func authMiddleware(apiKey string, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		token := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
 		if subtle.ConstantTimeCompare([]byte(token), []byte(apiKey)) != 1 {
-			writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "invalid or missing API key")
+			handler.WriteError(w, http.StatusUnauthorized, "UNAUTHORIZED", "invalid or missing API key")
 			return
 		}
 		next.ServeHTTP(w, r)
@@ -54,49 +54,45 @@ func authMiddleware(apiKey string, next http.Handler) http.Handler {
 }
 
 // jwtAuthMiddleware validates a JWT access token and attaches claims to context.
-// Used in AuthMode=jwt. Does not enforce role — role checks happen per-handler.
 func jwtAuthMiddleware(secret []byte, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		token := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
 		if token == "" {
-			writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "missing Authorization header")
+			handler.WriteError(w, http.StatusUnauthorized, "UNAUTHORIZED", "missing Authorization header")
 			return
 		}
 		claims, err := jwtutil.ParseAccessToken(secret, token)
 		if errors.Is(err, jwtutil.ErrTokenExpired) {
-			writeError(w, http.StatusUnauthorized, "TOKEN_EXPIRED", "access token has expired")
+			handler.WriteError(w, http.StatusUnauthorized, "TOKEN_EXPIRED", "access token has expired")
 			return
 		}
 		if err != nil {
-			writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "invalid access token")
+			handler.WriteError(w, http.StatusUnauthorized, "UNAUTHORIZED", "invalid access token")
 			return
 		}
-		ctx := context.WithValue(r.Context(), claimsKey, claims)
+		ctx := handler.ClaimsContext(r.Context(), claims)
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
 }
 
-// apiTokenMiddleware validates a long-lived API token (CLI/CI/SDK) and synthesises
-// a Claims value so downstream handlers stay uniform.
-// It is chained before jwtAuthMiddleware — if the bearer token parses as a JWT, JWT
-// wins; if not, we fall through to DB lookup.
+// apiTokenMiddleware tries JWT first, falls back to opaque DB token lookup.
 func apiTokenMiddleware(st store.Store, secret []byte, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		raw := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
 		if raw == "" {
-			writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "missing Authorization header")
+			handler.WriteError(w, http.StatusUnauthorized, "UNAUTHORIZED", "missing Authorization header")
 			return
 		}
 
 		// Try JWT first.
 		claims, err := jwtutil.ParseAccessToken(secret, raw)
 		if err == nil {
-			ctx := context.WithValue(r.Context(), claimsKey, claims)
+			ctx := handler.ClaimsContext(r.Context(), claims)
 			next.ServeHTTP(w, r.WithContext(ctx))
 			return
 		}
 		if errors.Is(err, jwtutil.ErrTokenExpired) {
-			writeError(w, http.StatusUnauthorized, "TOKEN_EXPIRED", "access token has expired")
+			handler.WriteError(w, http.StatusUnauthorized, "TOKEN_EXPIRED", "access token has expired")
 			return
 		}
 
@@ -105,19 +101,19 @@ func apiTokenMiddleware(st store.Store, secret []byte, next http.Handler) http.H
 		tokenHash := hex.EncodeToString(sum[:])
 		t, dbErr := st.GetAPITokenByHash(r.Context(), tokenHash)
 		if errors.Is(dbErr, store.ErrNotFound) {
-			writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "invalid or missing token")
+			handler.WriteError(w, http.StatusUnauthorized, "UNAUTHORIZED", "invalid or missing token")
 			return
 		}
 		if dbErr != nil {
-			writeError(w, http.StatusInternalServerError, "INTERNAL", "failed to validate token")
+			handler.WriteError(w, http.StatusInternalServerError, "INTERNAL", "failed to validate token")
 			return
 		}
 		if t.RevokedAt != nil {
-			writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "token has been revoked")
+			handler.WriteError(w, http.StatusUnauthorized, "UNAUTHORIZED", "token has been revoked")
 			return
 		}
 		if t.ExpiresAt != nil && time.Now().After(*t.ExpiresAt) {
-			writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "token has expired")
+			handler.WriteError(w, http.StatusUnauthorized, "UNAUTHORIZED", "token has expired")
 			return
 		}
 
@@ -127,19 +123,17 @@ func apiTokenMiddleware(st store.Store, secret []byte, next http.Handler) http.H
 			Roles: []jwtutil.RoleClaim{{Namespace: t.Namespace, RoleMask: t.Role}},
 		}
 		synth.Subject = t.UserID
-		ctx := context.WithValue(r.Context(), claimsKey, synth)
+		ctx := handler.ClaimsContext(r.Context(), synth)
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
 }
 
-// requireRole returns a middleware that checks the caller has at least the given
-// role in the target namespace. The namespace is read from the "namespace" query
-// param (defaulting to "default"). A global role (namespace="*") satisfies any check.
+// requireRole checks the caller has at least the given role in the target namespace.
 func requireRole(required model.Role, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		claims := claimsFromContext(r.Context())
+		claims := handler.ClaimsFromContext(r.Context())
 		if claims == nil {
-			writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "authentication required")
+			handler.WriteError(w, http.StatusUnauthorized, "UNAUTHORIZED", "authentication required")
 			return
 		}
 
@@ -150,14 +144,13 @@ func requireRole(required model.Role, next http.Handler) http.Handler {
 
 		mask := claims.RoleForNamespace(ns)
 		if !mask.Has(required) {
-			writeError(w, http.StatusForbidden, "FORBIDDEN", "insufficient permissions")
+			handler.WriteError(w, http.StatusForbidden, "FORBIDDEN", "insufficient permissions")
 			return
 		}
 		next.ServeHTTP(w, r)
 	})
 }
 
-// requireAdmin is a convenience wrapper for RoleAdmin.
 func requireAdmin(next http.Handler) http.Handler {
 	return requireRole(model.RoleAdmin, next)
 }

@@ -3,9 +3,9 @@ package sqlite_test
 import (
 	"testing"
 
-	"github.com/rulekit/rulekit-registry/internal/store"
-	"github.com/rulekit/rulekit-registry/internal/store/sqlite"
-	"github.com/rulekit/rulekit-registry/internal/store/testhelper"
+	"github.com/rulekit-dev/rulekit-registry/internal/store"
+	"github.com/rulekit-dev/rulekit-registry/internal/store/sqlite"
+	"github.com/rulekit-dev/rulekit-registry/internal/store/testhelper"
 )
 
 func TestSQLite(t *testing.T) {

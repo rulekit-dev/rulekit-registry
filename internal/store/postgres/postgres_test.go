@@ -4,9 +4,9 @@ import (
 	"os"
 	"testing"
 
-	"github.com/rulekit/rulekit-registry/internal/store"
-	"github.com/rulekit/rulekit-registry/internal/store/postgres"
-	"github.com/rulekit/rulekit-registry/internal/store/testhelper"
+	"github.com/rulekit-dev/rulekit-registry/internal/store"
+	"github.com/rulekit-dev/rulekit-registry/internal/store/postgres"
+	"github.com/rulekit-dev/rulekit-registry/internal/store/testhelper"
 )
 
 func TestPostgres(t *testing.T) {

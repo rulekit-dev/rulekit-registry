@@ -12,8 +12,8 @@ import (
 
 	_ "modernc.org/sqlite"
 
-	"github.com/rulekit/rulekit-registry/internal/model"
-	"github.com/rulekit/rulekit-registry/internal/store"
+	"github.com/rulekit-dev/rulekit-registry/internal/model"
+	"github.com/rulekit-dev/rulekit-registry/internal/store"
 )
 
 const schema = `

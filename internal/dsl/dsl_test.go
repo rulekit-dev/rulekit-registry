@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/rulekit/rulekit-registry/internal/dsl"
+	"github.com/rulekit-dev/rulekit-registry/internal/dsl"
 )
 
 // validDSLBytes returns a complete, valid DSL JSON with number, string, boolean,

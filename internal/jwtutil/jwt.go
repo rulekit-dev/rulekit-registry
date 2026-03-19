@@ -7,7 +7,7 @@ import (
 
 	"github.com/golang-jwt/jwt/v5"
 
-	"github.com/rulekit/rulekit-registry/internal/model"
+	"github.com/rulekit-dev/rulekit-registry/internal/model"
 )
 
 const (

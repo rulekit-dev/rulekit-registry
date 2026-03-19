@@ -3,9 +3,9 @@ package fs_test
 import (
 	"testing"
 
-	"github.com/rulekit/rulekit-registry/internal/blobstore"
-	"github.com/rulekit/rulekit-registry/internal/blobstore/fs"
-	"github.com/rulekit/rulekit-registry/internal/blobstore/testhelper"
+	"github.com/rulekit-dev/rulekit-registry/internal/blobstore"
+	"github.com/rulekit-dev/rulekit-registry/internal/blobstore/fs"
+	"github.com/rulekit-dev/rulekit-registry/internal/blobstore/testhelper"
 )
 
 func TestFSBlobStore(t *testing.T) {

@@ -8,7 +8,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/rulekit/rulekit-registry/internal/blobstore"
+	"github.com/rulekit-dev/rulekit-registry/internal/blobstore"
 )
 
 // RunSuite runs the full acceptance test suite against the BlobStore returned by

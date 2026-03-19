@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/rulekit/rulekit-registry/internal/model"
-	"github.com/rulekit/rulekit-registry/internal/store"
+	"github.com/rulekit-dev/rulekit-registry/internal/model"
+	"github.com/rulekit-dev/rulekit-registry/internal/store"
 )
 
 // RunSuite runs the full acceptance test suite against the store returned by

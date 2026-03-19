@@ -1,4 +1,4 @@
-package api
+package handler
 
 import (
 	"crypto/rand"
@@ -10,12 +10,10 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/rulekit/rulekit-registry/internal/model"
-	"github.com/rulekit/rulekit-registry/internal/store"
+	"github.com/rulekit-dev/rulekit-registry/internal/model"
+	"github.com/rulekit-dev/rulekit-registry/internal/store"
 )
 
-// AdminHandler handles user management, role assignment, and API token issuance.
-// All routes are admin-only and protected by requireAdmin middleware in the router.
 type AdminHandler struct {
 	store store.Store
 }
@@ -24,20 +22,18 @@ func NewAdminHandler(s store.Store) *AdminHandler {
 	return &AdminHandler{store: s}
 }
 
-// --- Users ---
-
 // GET /v1/admin/users
 func (h *AdminHandler) ListUsers(w http.ResponseWriter, r *http.Request) {
-	limit, offset := pageParams(r)
+	limit, offset := PageParams(r)
 	users, err := h.store.ListUsers(r.Context(), limit, offset)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "INTERNAL", "failed to list users")
+		WriteError(w, http.StatusInternalServerError, "INTERNAL", "failed to list users")
 		return
 	}
 	if users == nil {
 		users = []*model.User{}
 	}
-	writeJSON(w, http.StatusOK, users)
+	WriteJSON(w, http.StatusOK, users)
 }
 
 // DELETE /v1/admin/users/{userID}
@@ -45,29 +41,27 @@ func (h *AdminHandler) DeleteUser(w http.ResponseWriter, r *http.Request) {
 	userID := r.PathValue("userID")
 	if err := h.store.DeleteUser(r.Context(), userID); err != nil {
 		if errors.Is(err, store.ErrNotFound) {
-			writeError(w, http.StatusNotFound, "NOT_FOUND", "user not found")
+			WriteError(w, http.StatusNotFound, "NOT_FOUND", "user not found")
 			return
 		}
-		writeError(w, http.StatusInternalServerError, "INTERNAL", "failed to delete user")
+		WriteError(w, http.StatusInternalServerError, "INTERNAL", "failed to delete user")
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
 }
-
-// --- User roles ---
 
 // GET /v1/admin/users/{userID}/roles
 func (h *AdminHandler) ListUserRoles(w http.ResponseWriter, r *http.Request) {
 	userID := r.PathValue("userID")
 	roles, err := h.store.ListUserRoles(r.Context(), userID)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "INTERNAL", "failed to list roles")
+		WriteError(w, http.StatusInternalServerError, "INTERNAL", "failed to list roles")
 		return
 	}
 	if roles == nil {
 		roles = []*model.UserRole{}
 	}
-	writeJSON(w, http.StatusOK, roles)
+	WriteJSON(w, http.StatusOK, roles)
 }
 
 // PUT /v1/admin/users/{userID}/roles/{namespace}
@@ -77,10 +71,10 @@ func (h *AdminHandler) UpsertUserRole(w http.ResponseWriter, r *http.Request) {
 	namespace := r.PathValue("namespace")
 
 	if _, err := h.store.GetUserByID(r.Context(), userID); errors.Is(err, store.ErrNotFound) {
-		writeError(w, http.StatusNotFound, "NOT_FOUND", "user not found")
+		WriteError(w, http.StatusNotFound, "NOT_FOUND", "user not found")
 		return
 	} else if err != nil {
-		writeError(w, http.StatusInternalServerError, "INTERNAL", "failed to look up user")
+		WriteError(w, http.StatusInternalServerError, "INTERNAL", "failed to look up user")
 		return
 	}
 
@@ -88,16 +82,16 @@ func (h *AdminHandler) UpsertUserRole(w http.ResponseWriter, r *http.Request) {
 		RoleMask model.Role `json:"role_mask"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		writeError(w, http.StatusBadRequest, "BAD_REQUEST", "invalid JSON body")
+		WriteError(w, http.StatusBadRequest, "BAD_REQUEST", "invalid JSON body")
 		return
 	}
 
 	ur := &model.UserRole{UserID: userID, Namespace: namespace, RoleMask: body.RoleMask}
 	if err := h.store.UpsertUserRole(r.Context(), ur); err != nil {
-		writeError(w, http.StatusInternalServerError, "INTERNAL", "failed to upsert role")
+		WriteError(w, http.StatusInternalServerError, "INTERNAL", "failed to upsert role")
 		return
 	}
-	writeJSON(w, http.StatusOK, ur)
+	WriteJSON(w, http.StatusOK, ur)
 }
 
 // DELETE /v1/admin/users/{userID}/roles/{namespace}
@@ -107,16 +101,14 @@ func (h *AdminHandler) DeleteUserRole(w http.ResponseWriter, r *http.Request) {
 
 	if err := h.store.DeleteUserRole(r.Context(), userID, namespace); err != nil {
 		if errors.Is(err, store.ErrNotFound) {
-			writeError(w, http.StatusNotFound, "NOT_FOUND", "role not found")
+			WriteError(w, http.StatusNotFound, "NOT_FOUND", "role not found")
 			return
 		}
-		writeError(w, http.StatusInternalServerError, "INTERNAL", "failed to delete role")
+		WriteError(w, http.StatusInternalServerError, "INTERNAL", "failed to delete role")
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
 }
-
-// --- API tokens (CLI/CI/SDK) ---
 
 // POST /v1/admin/tokens
 // Body: { "user_id": "...", "name": "ci-pipeline", "namespace": "payments", "role": 2, "expires_in_days": 90 }
@@ -129,25 +121,25 @@ func (h *AdminHandler) CreateAPIToken(w http.ResponseWriter, r *http.Request) {
 		ExpiresInDays int        `json:"expires_in_days"` // 0 = never
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		writeError(w, http.StatusBadRequest, "BAD_REQUEST", "invalid JSON body")
+		WriteError(w, http.StatusBadRequest, "BAD_REQUEST", "invalid JSON body")
 		return
 	}
 	if body.UserID == "" || body.Name == "" || body.Namespace == "" {
-		writeError(w, http.StatusBadRequest, "BAD_REQUEST", "user_id, name, and namespace are required")
+		WriteError(w, http.StatusBadRequest, "BAD_REQUEST", "user_id, name, and namespace are required")
 		return
 	}
 
 	if _, err := h.store.GetUserByID(r.Context(), body.UserID); errors.Is(err, store.ErrNotFound) {
-		writeError(w, http.StatusNotFound, "NOT_FOUND", "user not found")
+		WriteError(w, http.StatusNotFound, "NOT_FOUND", "user not found")
 		return
 	} else if err != nil {
-		writeError(w, http.StatusInternalServerError, "INTERNAL", "failed to look up user")
+		WriteError(w, http.StatusInternalServerError, "INTERNAL", "failed to look up user")
 		return
 	}
 
 	raw, tokenHash, err := generateAPITokenValue()
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "INTERNAL", "failed to generate token")
+		WriteError(w, http.StatusInternalServerError, "INTERNAL", "failed to generate token")
 		return
 	}
 
@@ -166,12 +158,12 @@ func (h *AdminHandler) CreateAPIToken(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.store.CreateAPIToken(r.Context(), t); err != nil {
-		writeError(w, http.StatusInternalServerError, "INTERNAL", "failed to create token")
+		WriteError(w, http.StatusInternalServerError, "INTERNAL", "failed to create token")
 		return
 	}
 
 	// Return the raw token only on creation — it is never retrievable again.
-	writeJSON(w, http.StatusCreated, map[string]any{
+	WriteJSON(w, http.StatusCreated, map[string]any{
 		"id":         t.ID,
 		"token":      raw,
 		"name":       t.Name,
@@ -186,18 +178,18 @@ func (h *AdminHandler) CreateAPIToken(w http.ResponseWriter, r *http.Request) {
 func (h *AdminHandler) ListAPITokens(w http.ResponseWriter, r *http.Request) {
 	userID := r.URL.Query().Get("user_id")
 	if userID == "" {
-		writeError(w, http.StatusBadRequest, "BAD_REQUEST", "user_id query param is required")
+		WriteError(w, http.StatusBadRequest, "BAD_REQUEST", "user_id query param is required")
 		return
 	}
 	tokens, err := h.store.ListAPITokens(r.Context(), userID)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "INTERNAL", "failed to list tokens")
+		WriteError(w, http.StatusInternalServerError, "INTERNAL", "failed to list tokens")
 		return
 	}
 	if tokens == nil {
 		tokens = []*model.APIToken{}
 	}
-	writeJSON(w, http.StatusOK, tokens)
+	WriteJSON(w, http.StatusOK, tokens)
 }
 
 // DELETE /v1/admin/tokens/{tokenID}
@@ -205,10 +197,10 @@ func (h *AdminHandler) RevokeAPIToken(w http.ResponseWriter, r *http.Request) {
 	tokenID := r.PathValue("tokenID")
 	if err := h.store.RevokeAPIToken(r.Context(), tokenID); err != nil {
 		if errors.Is(err, store.ErrNotFound) {
-			writeError(w, http.StatusNotFound, "NOT_FOUND", "token not found or already revoked")
+			WriteError(w, http.StatusNotFound, "NOT_FOUND", "token not found or already revoked")
 			return
 		}
-		writeError(w, http.StatusInternalServerError, "INTERNAL", "failed to revoke token")
+		WriteError(w, http.StatusInternalServerError, "INTERNAL", "failed to revoke token")
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -220,6 +212,6 @@ func generateAPITokenValue() (raw, hash string, err error) {
 		return "", "", err
 	}
 	raw = "rk_" + hex.EncodeToString(b)
-	hash = hashString(raw)
+	hash = HashString(raw)
 	return raw, hash, nil
 }

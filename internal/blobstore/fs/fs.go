@@ -7,7 +7,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/rulekit/rulekit-registry/internal/blobstore"
+	"github.com/rulekit-dev/rulekit-registry/internal/blobstore"
 )
 
 type FSBlobStore struct {

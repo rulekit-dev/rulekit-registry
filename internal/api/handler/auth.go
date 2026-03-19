@@ -1,4 +1,4 @@
-package api
+package handler
 
 import (
 	"context"
@@ -15,15 +15,15 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/rulekit/rulekit-registry/internal/jwtutil"
-	"github.com/rulekit/rulekit-registry/internal/mailer"
-	"github.com/rulekit/rulekit-registry/internal/model"
-	"github.com/rulekit/rulekit-registry/internal/store"
+	"github.com/rulekit-dev/rulekit-registry/internal/jwtutil"
+	"github.com/rulekit-dev/rulekit-registry/internal/mailer"
+	"github.com/rulekit-dev/rulekit-registry/internal/model"
+	"github.com/rulekit-dev/rulekit-registry/internal/store"
 )
 
 const (
-	otpTTL        = 10 * time.Minute
-	otpLength     = 6
+	otpTTL          = 10 * time.Minute
+	otpLength       = 6
 	refreshTokenTTL = jwtutil.RefreshTokenTTL
 )
 
@@ -45,12 +45,12 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 		Email string `json:"email"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		writeError(w, http.StatusBadRequest, "BAD_REQUEST", "invalid JSON body")
+		WriteError(w, http.StatusBadRequest, "BAD_REQUEST", "invalid JSON body")
 		return
 	}
 	body.Email = strings.ToLower(strings.TrimSpace(body.Email))
 	if body.Email == "" {
-		writeError(w, http.StatusBadRequest, "BAD_REQUEST", "email is required")
+		WriteError(w, http.StatusBadRequest, "BAD_REQUEST", "email is required")
 		return
 	}
 
@@ -64,28 +64,28 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 		}
 		user.LastLoginAt = user.CreatedAt
 		if createErr := h.store.CreateUser(r.Context(), user); createErr != nil {
-			writeError(w, http.StatusInternalServerError, "INTERNAL", "failed to create user")
+			WriteError(w, http.StatusInternalServerError, "INTERNAL", "failed to create user")
 			return
 		}
 	} else if err != nil {
-		writeError(w, http.StatusInternalServerError, "INTERNAL", "failed to look up user")
+		WriteError(w, http.StatusInternalServerError, "INTERNAL", "failed to look up user")
 		return
 	}
 
 	code, err := generateOTP(otpLength)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "INTERNAL", "failed to generate OTP")
+		WriteError(w, http.StatusInternalServerError, "INTERNAL", "failed to generate OTP")
 		return
 	}
 
 	otp := &model.OTPCode{
 		ID:        uuid.NewString(),
 		UserID:    user.ID,
-		CodeHash:  hashString(code),
+		CodeHash:  HashString(code),
 		ExpiresAt: time.Now().Add(otpTTL).UTC(),
 	}
 	if err := h.store.CreateOTPCode(r.Context(), otp); err != nil {
-		writeError(w, http.StatusInternalServerError, "INTERNAL", "failed to store OTP")
+		WriteError(w, http.StatusInternalServerError, "INTERNAL", "failed to store OTP")
 		return
 	}
 
@@ -94,7 +94,7 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 		_ = err
 	}
 
-	writeJSON(w, http.StatusOK, map[string]string{"message": "OTP sent to email"})
+	WriteJSON(w, http.StatusOK, map[string]string{"message": "OTP sent to email"})
 }
 
 // POST /v1/auth/verify
@@ -105,65 +105,65 @@ func (h *AuthHandler) Verify(w http.ResponseWriter, r *http.Request) {
 		Code  string `json:"code"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		writeError(w, http.StatusBadRequest, "BAD_REQUEST", "invalid JSON body")
+		WriteError(w, http.StatusBadRequest, "BAD_REQUEST", "invalid JSON body")
 		return
 	}
 	body.Email = strings.ToLower(strings.TrimSpace(body.Email))
 	body.Code = strings.TrimSpace(body.Code)
 	if body.Email == "" || body.Code == "" {
-		writeError(w, http.StatusBadRequest, "BAD_REQUEST", "email and code are required")
+		WriteError(w, http.StatusBadRequest, "BAD_REQUEST", "email and code are required")
 		return
 	}
 
 	user, err := h.store.GetUserByEmail(r.Context(), body.Email)
 	if errors.Is(err, store.ErrNotFound) {
-		writeError(w, http.StatusUnauthorized, "INVALID_CODE", "invalid or expired code")
+		WriteError(w, http.StatusUnauthorized, "INVALID_CODE", "invalid or expired code")
 		return
 	}
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "INTERNAL", "failed to look up user")
+		WriteError(w, http.StatusInternalServerError, "INTERNAL", "failed to look up user")
 		return
 	}
 
 	otp, err := h.store.GetUnusedOTPCode(r.Context(), user.ID)
 	if errors.Is(err, store.ErrNotFound) {
-		writeError(w, http.StatusUnauthorized, "INVALID_CODE", "invalid or expired code")
+		WriteError(w, http.StatusUnauthorized, "INVALID_CODE", "invalid or expired code")
 		return
 	}
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "INTERNAL", "failed to look up OTP")
+		WriteError(w, http.StatusInternalServerError, "INTERNAL", "failed to look up OTP")
 		return
 	}
 
-	if otp.CodeHash != hashString(body.Code) {
-		writeError(w, http.StatusUnauthorized, "INVALID_CODE", "invalid or expired code")
+	if otp.CodeHash != HashString(body.Code) {
+		WriteError(w, http.StatusUnauthorized, "INVALID_CODE", "invalid or expired code")
 		return
 	}
 
 	if err := h.store.MarkOTPUsed(r.Context(), otp.ID); err != nil {
-		writeError(w, http.StatusInternalServerError, "INTERNAL", "failed to consume OTP")
+		WriteError(w, http.StatusInternalServerError, "INTERNAL", "failed to consume OTP")
 		return
 	}
 	if err := h.store.UpdateUserLastLogin(r.Context(), user.ID); err != nil {
-		writeError(w, http.StatusInternalServerError, "INTERNAL", "failed to update last login")
+		WriteError(w, http.StatusInternalServerError, "INTERNAL", "failed to update last login")
 		return
 	}
 
 	roles, err := h.store.ListUserRoles(r.Context(), user.ID)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "INTERNAL", "failed to load roles")
+		WriteError(w, http.StatusInternalServerError, "INTERNAL", "failed to load roles")
 		return
 	}
 
 	accessToken, err := jwtutil.SignAccessToken(h.jwtSecret, user, roles)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "INTERNAL", "failed to issue access token")
+		WriteError(w, http.StatusInternalServerError, "INTERNAL", "failed to issue access token")
 		return
 	}
 
 	refreshToken, refreshHash, err := generateRefreshToken()
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "INTERNAL", "failed to generate refresh token")
+		WriteError(w, http.StatusInternalServerError, "INTERNAL", "failed to generate refresh token")
 		return
 	}
 
@@ -179,11 +179,11 @@ func (h *AuthHandler) Verify(w http.ResponseWriter, r *http.Request) {
 		ExpiresAt: &exp,
 	}
 	if err := h.store.CreateAPIToken(r.Context(), rt); err != nil {
-		writeError(w, http.StatusInternalServerError, "INTERNAL", "failed to store refresh token")
+		WriteError(w, http.StatusInternalServerError, "INTERNAL", "failed to store refresh token")
 		return
 	}
 
-	writeJSON(w, http.StatusOK, map[string]any{
+	WriteJSON(w, http.StatusOK, map[string]any{
 		"access_token":  accessToken,
 		"refresh_token": refreshToken,
 		"token_type":    "Bearer",
@@ -198,61 +198,61 @@ func (h *AuthHandler) Refresh(w http.ResponseWriter, r *http.Request) {
 		RefreshToken string `json:"refresh_token"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		writeError(w, http.StatusBadRequest, "BAD_REQUEST", "invalid JSON body")
+		WriteError(w, http.StatusBadRequest, "BAD_REQUEST", "invalid JSON body")
 		return
 	}
 	if body.RefreshToken == "" {
-		writeError(w, http.StatusBadRequest, "BAD_REQUEST", "refresh_token is required")
+		WriteError(w, http.StatusBadRequest, "BAD_REQUEST", "refresh_token is required")
 		return
 	}
 
-	tokenHash := hashString(body.RefreshToken)
+	tokenHash := HashString(body.RefreshToken)
 	rt, err := h.store.GetAPITokenByHash(r.Context(), tokenHash)
 	if errors.Is(err, store.ErrNotFound) {
-		writeError(w, http.StatusUnauthorized, "INVALID_TOKEN", "invalid or expired refresh token")
+		WriteError(w, http.StatusUnauthorized, "INVALID_TOKEN", "invalid or expired refresh token")
 		return
 	}
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "INTERNAL", "failed to look up token")
+		WriteError(w, http.StatusInternalServerError, "INTERNAL", "failed to look up token")
 		return
 	}
 
 	if rt.RevokedAt != nil {
-		writeError(w, http.StatusUnauthorized, "INVALID_TOKEN", "refresh token has been revoked")
+		WriteError(w, http.StatusUnauthorized, "INVALID_TOKEN", "refresh token has been revoked")
 		return
 	}
 	if rt.ExpiresAt != nil && time.Now().After(*rt.ExpiresAt) {
-		writeError(w, http.StatusUnauthorized, "INVALID_TOKEN", "refresh token has expired")
+		WriteError(w, http.StatusUnauthorized, "INVALID_TOKEN", "refresh token has expired")
 		return
 	}
 
 	user, err := h.store.GetUserByID(r.Context(), rt.UserID)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "INTERNAL", "failed to load user")
+		WriteError(w, http.StatusInternalServerError, "INTERNAL", "failed to load user")
 		return
 	}
 
 	roles, err := h.store.ListUserRoles(r.Context(), user.ID)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "INTERNAL", "failed to load roles")
+		WriteError(w, http.StatusInternalServerError, "INTERNAL", "failed to load roles")
 		return
 	}
 
 	accessToken, err := jwtutil.SignAccessToken(h.jwtSecret, user, roles)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "INTERNAL", "failed to issue access token")
+		WriteError(w, http.StatusInternalServerError, "INTERNAL", "failed to issue access token")
 		return
 	}
 
 	// Rotate the refresh token.
 	if err := h.store.RevokeAPIToken(r.Context(), rt.ID); err != nil {
-		writeError(w, http.StatusInternalServerError, "INTERNAL", "failed to rotate refresh token")
+		WriteError(w, http.StatusInternalServerError, "INTERNAL", "failed to rotate refresh token")
 		return
 	}
 
 	newRefreshToken, newRefreshHash, err := generateRefreshToken()
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "INTERNAL", "failed to generate refresh token")
+		WriteError(w, http.StatusInternalServerError, "INTERNAL", "failed to generate refresh token")
 		return
 	}
 
@@ -268,11 +268,11 @@ func (h *AuthHandler) Refresh(w http.ResponseWriter, r *http.Request) {
 		ExpiresAt: &exp,
 	}
 	if err := h.store.CreateAPIToken(r.Context(), newRT); err != nil {
-		writeError(w, http.StatusInternalServerError, "INTERNAL", "failed to store refresh token")
+		WriteError(w, http.StatusInternalServerError, "INTERNAL", "failed to store refresh token")
 		return
 	}
 
-	writeJSON(w, http.StatusOK, map[string]any{
+	WriteJSON(w, http.StatusOK, map[string]any{
 		"access_token":  accessToken,
 		"refresh_token": newRefreshToken,
 		"token_type":    "Bearer",
@@ -281,22 +281,21 @@ func (h *AuthHandler) Refresh(w http.ResponseWriter, r *http.Request) {
 }
 
 // POST /v1/auth/logout
-// Requires Bearer access token in header; revokes the associated refresh token by user ID.
 // Body: { "refresh_token": "<token>" }
 func (h *AuthHandler) Logout(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		RefreshToken string `json:"refresh_token"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		writeError(w, http.StatusBadRequest, "BAD_REQUEST", "invalid JSON body")
+		WriteError(w, http.StatusBadRequest, "BAD_REQUEST", "invalid JSON body")
 		return
 	}
 	if body.RefreshToken == "" {
-		writeError(w, http.StatusBadRequest, "BAD_REQUEST", "refresh_token is required")
+		WriteError(w, http.StatusBadRequest, "BAD_REQUEST", "refresh_token is required")
 		return
 	}
 
-	tokenHash := hashString(body.RefreshToken)
+	tokenHash := HashString(body.RefreshToken)
 	rt, err := h.store.GetAPITokenByHash(r.Context(), tokenHash)
 	if errors.Is(err, store.ErrNotFound) {
 		// Already gone; treat as success.
@@ -304,19 +303,22 @@ func (h *AuthHandler) Logout(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "INTERNAL", "failed to look up token")
+		WriteError(w, http.StatusInternalServerError, "INTERNAL", "failed to look up token")
 		return
 	}
 
 	if err := h.store.RevokeAPIToken(r.Context(), rt.ID); err != nil && !errors.Is(err, store.ErrNotFound) {
-		writeError(w, http.StatusInternalServerError, "INTERNAL", "failed to revoke token")
+		WriteError(w, http.StatusInternalServerError, "INTERNAL", "failed to revoke token")
 		return
 	}
 
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// --- helpers ---
+// ClaimsContext attaches claims to a context (used by middleware).
+func ClaimsContext(ctx context.Context, claims *jwtutil.Claims) context.Context {
+	return context.WithValue(ctx, ClaimsKey, claims)
+}
 
 func generateOTP(length int) (string, error) {
 	const digits = "0123456789"
@@ -337,21 +339,11 @@ func generateRefreshToken() (token, hash string, err error) {
 		return "", "", fmt.Errorf("generate refresh token: %w", err)
 	}
 	token = hex.EncodeToString(b)
-	hash = hashString(token)
+	hash = HashString(token)
 	return token, hash, nil
 }
 
-func hashString(s string) string {
+func HashString(s string) string {
 	sum := sha256.Sum256([]byte(s))
 	return hex.EncodeToString(sum[:])
-}
-
-// contextKey is used to store auth claims in request context.
-type contextKey int
-
-const claimsKey contextKey = iota
-
-func claimsFromContext(ctx context.Context) *jwtutil.Claims {
-	v, _ := ctx.Value(claimsKey).(*jwtutil.Claims)
-	return v
 }

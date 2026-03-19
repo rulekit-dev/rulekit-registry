@@ -5,7 +5,7 @@ import (
 	"context"
 	"errors"
 
-	"github.com/rulekit/rulekit-registry/internal/model"
+	"github.com/rulekit-dev/rulekit-registry/internal/model"
 )
 
 // Sentinel errors returned by Store implementations.

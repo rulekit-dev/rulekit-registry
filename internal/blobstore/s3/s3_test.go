@@ -4,9 +4,9 @@ import (
 	"os"
 	"testing"
 
-	"github.com/rulekit/rulekit-registry/internal/blobstore"
-	s3blob "github.com/rulekit/rulekit-registry/internal/blobstore/s3"
-	"github.com/rulekit/rulekit-registry/internal/blobstore/testhelper"
+	"github.com/rulekit-dev/rulekit-registry/internal/blobstore"
+	s3blob "github.com/rulekit-dev/rulekit-registry/internal/blobstore/s3"
+	"github.com/rulekit-dev/rulekit-registry/internal/blobstore/testhelper"
 )
 
 func TestS3BlobStore(t *testing.T) {

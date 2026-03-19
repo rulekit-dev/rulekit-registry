@@ -14,7 +14,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/smithy-go"
 
-	"github.com/rulekit/rulekit-registry/internal/blobstore"
+	"github.com/rulekit-dev/rulekit-registry/internal/blobstore"
 )
 
 type Config struct {

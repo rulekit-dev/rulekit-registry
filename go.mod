@@ -1,4 +1,4 @@
-module github.com/rulekit/rulekit-registry
+module github.com/rulekit-dev/rulekit-registry
 
 go 1.26.1
 
