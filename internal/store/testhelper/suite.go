@@ -13,6 +13,22 @@ import (
 	"github.com/rulekit-dev/rulekit-registry/internal/store"
 )
 
+// jsonEqual reports whether two JSON byte slices are semantically equal,
+// regardless of key ordering. Used to compare DSL values across backends that
+// may reorder keys (e.g. Postgres JSONB).
+func jsonEqual(a, b []byte) bool {
+	var av, bv any
+	if err := json.Unmarshal(a, &av); err != nil {
+		return false
+	}
+	if err := json.Unmarshal(b, &bv); err != nil {
+		return false
+	}
+	an, _ := json.Marshal(av)
+	bn, _ := json.Marshal(bv)
+	return string(an) == string(bn)
+}
+
 // RunSuite runs the full acceptance test suite against the store returned by
 // newStore. newStore is called once per sub-test so each test gets a clean
 // store instance.
@@ -169,7 +185,7 @@ func RunSuite(t *testing.T, newStore func(t *testing.T) store.Store) {
 		if err != nil {
 			t.Fatalf("GetDraft: %v", err)
 		}
-		if string(got.DSL) != string(dsl1) {
+		if !jsonEqual(got.DSL, dsl1) {
 			t.Errorf("DSL after insert: got %s, want %s", got.DSL, dsl1)
 		}
 		if got.Namespace != ns {
@@ -196,7 +212,7 @@ func RunSuite(t *testing.T, newStore func(t *testing.T) store.Store) {
 		if err != nil {
 			t.Fatalf("GetDraft after update: %v", err)
 		}
-		if string(got2.DSL) != string(dsl2) {
+		if !jsonEqual(got2.DSL, dsl2) {
 			t.Errorf("DSL after update: got %s, want %s", got2.DSL, dsl2)
 		}
 

@@ -14,12 +14,16 @@ func TestPostgres(t *testing.T) {
 	if dsn == "" {
 		t.Skip("RULEKIT_DATABASE_URL not set; skipping PostgreSQL tests")
 	}
+
+	// Open and migrate once; each subtest gets the same store.
+	// Data isolation is guaranteed by unique namespaces in the shared suite.
+	shared, err := postgres.New(dsn)
+	if err != nil {
+		t.Fatalf("postgres.New: %v", err)
+	}
+	t.Cleanup(func() { shared.Close() })
+
 	testhelper.RunSuite(t, func(t *testing.T) store.Store {
-		s, err := postgres.New(dsn)
-		if err != nil {
-			t.Fatalf("postgres.New: %v", err)
-		}
-		t.Cleanup(func() { s.Close() })
-		return s
+		return shared
 	})
 }

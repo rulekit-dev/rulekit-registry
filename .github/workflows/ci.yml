@@ -59,7 +59,7 @@ jobs:
 
       - uses: golangci/golangci-lint-action@v6
         with:
-          version: latest
+          version: v2.1.6
 
   docker:
     name: Docker Build & Push
