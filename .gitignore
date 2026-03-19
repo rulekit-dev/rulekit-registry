@@ -1,0 +1,21 @@
+# Binaries
+rulekitd
+
+# Data directories
+/data/
+*.db
+*.sqlite
+*.sqlite3
+
+# Environment
+.env
+.env.*
+
+# macOS
+.DS_Store
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo

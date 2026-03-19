@@ -1,0 +1,208 @@
+{
+  "info": {
+    "name": "rulekit-registry",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "base_url",
+      "value": "http://localhost:8080"
+    },
+    {
+      "key": "namespace",
+      "value": "default"
+    },
+    {
+      "key": "ruleset_key",
+      "value": "pricing"
+    }
+  ],
+  "item": [
+    {
+      "name": "Health",
+      "item": [
+        {
+          "name": "Health check",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/healthz"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Rulesets",
+      "item": [
+        {
+          "name": "List rulesets",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{base_url}}/v1/rulesets?namespace={{namespace}}",
+              "host": ["{{base_url}}"],
+              "path": ["v1", "rulesets"],
+              "query": [{ "key": "namespace", "value": "{{namespace}}" }]
+            }
+          }
+        },
+        {
+          "name": "Create ruleset",
+          "request": {
+            "method": "POST",
+            "url": "{{base_url}}/v1/rulesets",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"namespace\": \"{{namespace}}\",\n  \"key\": \"{{ruleset_key}}\",\n  \"name\": \"Pricing Rules\",\n  \"description\": \"Rules for pricing decisions\"\n}"
+            }
+          }
+        },
+        {
+          "name": "Get ruleset",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{base_url}}/v1/rulesets/{{ruleset_key}}?namespace={{namespace}}",
+              "host": ["{{base_url}}"],
+              "path": ["v1", "rulesets", "{{ruleset_key}}"],
+              "query": [{ "key": "namespace", "value": "{{namespace}}" }]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Draft",
+      "item": [
+        {
+          "name": "Get draft",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{base_url}}/v1/rulesets/{{ruleset_key}}/draft?namespace={{namespace}}",
+              "host": ["{{base_url}}"],
+              "path": ["v1", "rulesets", "{{ruleset_key}}", "draft"],
+              "query": [{ "key": "namespace", "value": "{{namespace}}" }]
+            }
+          }
+        },
+        {
+          "name": "Update draft DSL",
+          "request": {
+            "method": "PUT",
+            "url": {
+              "raw": "{{base_url}}/v1/rulesets/{{ruleset_key}}/draft?namespace={{namespace}}",
+              "host": ["{{base_url}}"],
+              "path": ["v1", "rulesets", "{{ruleset_key}}", "draft"],
+              "query": [{ "key": "namespace", "value": "{{namespace}}" }]
+            },
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"dsl\": {\n    \"dsl_version\": \"v1\",\n    \"strategy\": \"first_match\",\n    \"schema\": {\n      \"amount\":   { \"type\": \"number\" },\n      \"currency\": { \"type\": \"enum\", \"options\": [\"IDR\", \"USD\"] },\n      \"weekend\":  { \"type\": \"boolean\" }\n    },\n    \"rules\": [\n      {\n        \"id\": \"r1\",\n        \"name\": \"High amount\",\n        \"when\": [{ \"field\": \"amount\", \"op\": \"gt\", \"value\": 50000000 }],\n        \"then\": { \"decision\": \"manual_review\" }\n      },\n      {\n        \"id\": \"r2\",\n        \"name\": \"Weekend surcharge\",\n        \"when\": [{ \"field\": \"weekend\", \"op\": \"eq\", \"value\": true }],\n        \"then\": { \"decision\": \"surcharge\" }\n      }\n    ],\n    \"default\": { \"decision\": \"approve\" }\n  }\n}"
+            }
+          }
+        },
+        {
+          "name": "Update draft DSL (invalid — triggers INVALID_DSL)",
+          "request": {
+            "method": "PUT",
+            "url": {
+              "raw": "{{base_url}}/v1/rulesets/{{ruleset_key}}/draft?namespace={{namespace}}",
+              "host": ["{{base_url}}"],
+              "path": ["v1", "rulesets", "{{ruleset_key}}", "draft"],
+              "query": [{ "key": "namespace", "value": "{{namespace}}" }]
+            },
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"dsl\": {\n    \"dsl_version\": \"v1\",\n    \"strategy\": \"first_match\",\n    \"schema\": {\n      \"amount\": { \"type\": \"number\" }\n    },\n    \"rules\": [\n      {\n        \"id\": \"r1\",\n        \"name\": \"Bad rule\",\n        \"when\": [{ \"field\": \"nonexistent_field\", \"op\": \"gt\", \"value\": 100 }],\n        \"then\": { \"decision\": \"fail\" }\n      }\n    ],\n    \"default\": { \"decision\": \"ok\" }\n  }\n}"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Publish",
+      "item": [
+        {
+          "name": "Publish ruleset",
+          "request": {
+            "method": "POST",
+            "url": {
+              "raw": "{{base_url}}/v1/rulesets/{{ruleset_key}}/publish?namespace={{namespace}}",
+              "host": ["{{base_url}}"],
+              "path": ["v1", "rulesets", "{{ruleset_key}}", "publish"],
+              "query": [{ "key": "namespace", "value": "{{namespace}}" }]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Versions",
+      "item": [
+        {
+          "name": "List versions",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{base_url}}/v1/rulesets/{{ruleset_key}}/versions?namespace={{namespace}}",
+              "host": ["{{base_url}}"],
+              "path": ["v1", "rulesets", "{{ruleset_key}}", "versions"],
+              "query": [{ "key": "namespace", "value": "{{namespace}}" }]
+            }
+          }
+        },
+        {
+          "name": "Get latest version",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{base_url}}/v1/rulesets/{{ruleset_key}}/versions/latest?namespace={{namespace}}",
+              "host": ["{{base_url}}"],
+              "path": ["v1", "rulesets", "{{ruleset_key}}", "versions", "latest"],
+              "query": [{ "key": "namespace", "value": "{{namespace}}" }]
+            }
+          }
+        },
+        {
+          "name": "Get specific version",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{base_url}}/v1/rulesets/{{ruleset_key}}/versions/1?namespace={{namespace}}",
+              "host": ["{{base_url}}"],
+              "path": ["v1", "rulesets", "{{ruleset_key}}", "versions", "1"],
+              "query": [{ "key": "namespace", "value": "{{namespace}}" }]
+            }
+          }
+        },
+        {
+          "name": "Download latest bundle",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{base_url}}/v1/rulesets/{{ruleset_key}}/versions/latest/bundle?namespace={{namespace}}",
+              "host": ["{{base_url}}"],
+              "path": ["v1", "rulesets", "{{ruleset_key}}", "versions", "latest", "bundle"],
+              "query": [{ "key": "namespace", "value": "{{namespace}}" }]
+            }
+          }
+        },
+        {
+          "name": "Download specific version bundle",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{base_url}}/v1/rulesets/{{ruleset_key}}/versions/1/bundle?namespace={{namespace}}",
+              "host": ["{{base_url}}"],
+              "path": ["v1", "rulesets", "{{ruleset_key}}", "versions", "1", "bundle"],
+              "query": [{ "key": "namespace", "value": "{{namespace}}" }]
+            }
+          }
+        }
+      ]
+    }
+  ]
+}

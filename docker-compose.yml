@@ -1,0 +1,93 @@
+version: "3.9"
+
+# ── Default (SQLite + fs blob store, no profile required) ──────────────────────
+# Run with:  docker compose up
+services:
+  registry:
+    build: .
+    user: "0"
+    ports:
+      - "8080:8080"
+    environment:
+      RULEKIT_STORE: sqlite
+      RULEKIT_DATA_DIR: /data
+      RULEKIT_BLOB_STORE: fs
+      # RULEKIT_BLOB_DIR defaults to {RULEKIT_DATA_DIR}/blobs, covered by the volume below
+    volumes:
+      - rulekit-data:/data
+
+# ── PostgreSQL + fs blob store profile ────────────────────────────────────────
+# Run with:  docker compose --profile postgres up
+  registry-postgres:
+    build: .
+    user: "0"
+    ports:
+      - "8080:8080"
+    environment:
+      RULEKIT_STORE: postgres
+      RULEKIT_DATABASE_URL: postgres://rulekit:rulekit@postgres:5432/rulekit?sslmode=disable
+      RULEKIT_BLOB_STORE: fs
+      RULEKIT_BLOB_DIR: /blobs
+    volumes:
+      - rulekit-blobs:/blobs
+    depends_on:
+      postgres:
+        condition: service_healthy
+    profiles:
+      - postgres
+
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: rulekit
+      POSTGRES_PASSWORD: rulekit
+      POSTGRES_DB: rulekit
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U rulekit"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    profiles:
+      - postgres
+
+# ── PostgreSQL + S3 blob store profile ────────────────────────────────────────
+# Run with:  docker compose --profile postgres-s3 up
+# Requires: RULEKIT_S3_BUCKET, RULEKIT_S3_REGION, RULEKIT_S3_ACCESS_KEY_ID,
+#           RULEKIT_S3_SECRET_ACCESS_KEY set in the shell (or a .env file).
+# For Cloudflare R2, also set RULEKIT_S3_ENDPOINT and RULEKIT_S3_REGION=auto.
+  registry-postgres-s3:
+    build: .
+    ports:
+      - "8080:8080"
+    environment:
+      RULEKIT_STORE: postgres
+      RULEKIT_DATABASE_URL: postgres://rulekit:rulekit@postgres-s3:5432/rulekit?sslmode=disable
+      RULEKIT_BLOB_STORE: s3
+      RULEKIT_S3_BUCKET: ${RULEKIT_S3_BUCKET}
+      RULEKIT_S3_REGION: ${RULEKIT_S3_REGION:-us-east-1}
+      RULEKIT_S3_ENDPOINT: ${RULEKIT_S3_ENDPOINT:-}
+      RULEKIT_S3_ACCESS_KEY_ID: ${RULEKIT_S3_ACCESS_KEY_ID}
+      RULEKIT_S3_SECRET_ACCESS_KEY: ${RULEKIT_S3_SECRET_ACCESS_KEY}
+    depends_on:
+      postgres-s3:
+        condition: service_healthy
+    profiles:
+      - postgres-s3
+
+  postgres-s3:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: rulekit
+      POSTGRES_PASSWORD: rulekit
+      POSTGRES_DB: rulekit
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U rulekit"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    profiles:
+      - postgres-s3
+
+volumes:
+  rulekit-data:
+  rulekit-blobs:
