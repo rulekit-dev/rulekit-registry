@@ -60,5 +60,8 @@ type Store interface {
 	ListUserRoles(ctx context.Context, userID string) ([]*model.UserRole, error)
 	DeleteUserRole(ctx context.Context, userID, namespace string) error
 
+	// Ping checks that the underlying database is reachable.
+	Ping(ctx context.Context) error
+
 	Close() error
 }

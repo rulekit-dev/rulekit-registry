@@ -1,16 +1,20 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
+	"math"
 	"net/http"
+	"time"
 
 	"github.com/rulekit-dev/rulekit-registry/internal/api/handler"
 	"github.com/rulekit-dev/rulekit-registry/internal/config"
 	"github.com/rulekit-dev/rulekit-registry/internal/model"
 	"github.com/rulekit-dev/rulekit-registry/internal/store"
+	"github.com/rulekit-dev/rulekit-registry/internal/version"
 )
 
-func NewRouter(h *handler.RulesetHandler, auth *handler.AuthHandler, admin *handler.AdminHandler, st store.Store, cfg *config.Config) http.Handler {
+func NewRouter(h *handler.RulesetHandler, auth *handler.AuthHandler, admin *handler.AdminHandler, st store.Store, cfg *config.Config, startTime time.Time) http.Handler {
 	mux := http.NewServeMux()
 
 	if cfg.AuthMode == config.AuthModeJWT {
@@ -20,9 +24,31 @@ func NewRouter(h *handler.RulesetHandler, auth *handler.AuthHandler, admin *hand
 	}
 
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
+		ctx, cancel := context.WithTimeout(r.Context(), 500*time.Millisecond)
+		defer cancel()
+
+		uptime := int64(math.Round(time.Since(startTime).Seconds()))
 		w.Header().Set("Content-Type", "application/json")
+
+		if err := st.Ping(ctx); err != nil {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			json.NewEncoder(w).Encode(map[string]any{ //nolint:errcheck
+				"status":         "degraded",
+				"version":        version.Version,
+				"store":          cfg.Store,
+				"uptime_seconds": uptime,
+				"error":          "database unreachable",
+			})
+			return
+		}
+
 		w.WriteHeader(http.StatusOK)
-		json.NewEncoder(w).Encode(map[string]string{"status": "ok"}) //nolint:errcheck
+		json.NewEncoder(w).Encode(map[string]any{ //nolint:errcheck
+			"status":         "ok",
+			"version":        version.Version,
+			"store":          cfg.Store,
+			"uptime_seconds": uptime,
+		})
 	})
 
 	var root http.Handler = mux

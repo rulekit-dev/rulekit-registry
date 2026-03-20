@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/rulekit-dev/rulekit-registry/internal/api"
 	"github.com/rulekit-dev/rulekit-registry/internal/api/handler"
@@ -39,7 +40,7 @@ func newTestServer(t *testing.T) *httptest.Server {
 	})
 
 	h := handler.NewRulesetHandler(st, blobs)
-	return httptest.NewServer(api.NewRouter(h, nil, nil, st, legacyCfg("")))
+	return httptest.NewServer(api.NewRouter(h, nil, nil, st, legacyCfg(""), time.Now()))
 }
 
 func mustJSON(t *testing.T, v any) *bytes.Buffer {
@@ -671,7 +672,7 @@ func TestAuthRequiredWhenKeySet(t *testing.T) {
 	blobs, _ := fsblobstore.New(dir + "/blobs")
 	t.Cleanup(func() { st.Close(); blobs.Close() })
 
-	srv := httptest.NewServer(api.NewRouter(handler.NewRulesetHandler(st, blobs), nil, nil, st, legacyCfg("secret-key")))
+	srv := httptest.NewServer(api.NewRouter(handler.NewRulesetHandler(st, blobs), nil, nil, st, legacyCfg("secret-key"), time.Now()))
 	defer srv.Close()
 
 	// No token → 401
@@ -715,7 +716,7 @@ func TestHealthzSkipsAuth(t *testing.T) {
 	blobs, _ := fsblobstore.New(dir + "/blobs")
 	t.Cleanup(func() { st.Close(); blobs.Close() })
 
-	srv := httptest.NewServer(api.NewRouter(handler.NewRulesetHandler(st, blobs), nil, nil, st, legacyCfg("secret-key")))
+	srv := httptest.NewServer(api.NewRouter(handler.NewRulesetHandler(st, blobs), nil, nil, st, legacyCfg("secret-key"), time.Now()))
 	defer srv.Close()
 
 	resp, err := http.Get(srv.URL + "/healthz")

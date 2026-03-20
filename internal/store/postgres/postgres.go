@@ -92,6 +92,8 @@ func New(databaseURL string) (*PostgresStore, error) {
 	return &PostgresStore{db: db}, nil
 }
 
+func (s *PostgresStore) Ping(ctx context.Context) error { return s.db.PingContext(ctx) }
+
 func (s *PostgresStore) Close() error { return s.db.Close() }
 
 func (s *PostgresStore) ListRulesets(ctx context.Context, namespace string, limit, offset int) ([]*model.Ruleset, error) {

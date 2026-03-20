@@ -95,6 +95,8 @@ func New(dataDir string) (*SQLiteStore, error) {
 	return &SQLiteStore{db: db}, nil
 }
 
+func (s *SQLiteStore) Ping(ctx context.Context) error { return s.db.PingContext(ctx) }
+
 func (s *SQLiteStore) Close() error { return s.db.Close() }
 
 func (s *SQLiteStore) ListRulesets(ctx context.Context, namespace string, limit, offset int) ([]*model.Ruleset, error) {

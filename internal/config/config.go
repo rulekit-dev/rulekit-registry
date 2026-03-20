@@ -41,7 +41,16 @@ type Config struct {
 	SMTPUseTLS   bool   // RULEKIT_SMTP_USE_TLS: use implicit TLS (port 465) instead of STARTTLS
 
 	// CORS
-	CORSOrigins string // RULEKIT_CORS_ORIGINS: comma-separated allowed origins, "*" for all
+	CORSOrigins string // RULEKIT_CORS_ORIGINS: comma-separated allowed origins, "*" for all (default: http://localhost:3001)
+
+	// Rate limiting
+	RateLimit      bool    // RULEKIT_RATE_LIMIT: enable rate limiting (default: false)
+	RateLimitRPS   float64 // RULEKIT_RATE_LIMIT_RPS: requests per second (default: 100)
+	RateLimitBurst int     // RULEKIT_RATE_LIMIT_BURST: burst size (default: 200)
+
+	// Network
+	TrustedProxy bool   // RULEKIT_TRUSTED_PROXY: trust X-Forwarded-For header (default: false)
+	Env          string // RULEKIT_ENV: environment name, e.g. "production" (default: "development")
 
 	// Blob store
 	BlobStore     string // RULEKIT_BLOB_STORE: "fs" (default) | "s3"
@@ -73,7 +82,13 @@ func Load() (*Config, error) {
 	flag.StringVar(&cfg.SMTPFrom, "smtp-from", env("RULEKIT_SMTP_FROM", ""), "SMTP from address (env: RULEKIT_SMTP_FROM)")
 	smtpTLS := flag.Bool("smtp-use-tls", envBool("RULEKIT_SMTP_USE_TLS", false), "use implicit TLS for SMTP (env: RULEKIT_SMTP_USE_TLS)")
 
-	flag.StringVar(&cfg.CORSOrigins, "cors-origins", env("RULEKIT_CORS_ORIGINS", ""), "allowed CORS origins, comma-separated or * (env: RULEKIT_CORS_ORIGINS)")
+	flag.StringVar(&cfg.CORSOrigins, "cors-origins", env("RULEKIT_CORS_ORIGINS", "http://localhost:3001"), "allowed CORS origins, comma-separated or * (env: RULEKIT_CORS_ORIGINS)")
+
+	rateLimit := flag.Bool("rate-limit", envBool("RULEKIT_RATE_LIMIT", false), "enable rate limiting (env: RULEKIT_RATE_LIMIT)")
+	rateLimitRPS := flag.Float64("rate-limit-rps", envFloat64("RULEKIT_RATE_LIMIT_RPS", 100), "rate limit requests per second (env: RULEKIT_RATE_LIMIT_RPS)")
+	rateLimitBurst := flag.Int("rate-limit-burst", envInt("RULEKIT_RATE_LIMIT_BURST", 200), "rate limit burst size (env: RULEKIT_RATE_LIMIT_BURST)")
+	trustedProxy := flag.Bool("trusted-proxy", envBool("RULEKIT_TRUSTED_PROXY", false), "trust X-Forwarded-For header (env: RULEKIT_TRUSTED_PROXY)")
+	flag.StringVar(&cfg.Env, "env", env("RULEKIT_ENV", "development"), "environment name (env: RULEKIT_ENV)")
 
 	flag.StringVar(&cfg.BlobStore, "blob-store", env("RULEKIT_BLOB_STORE", "fs"), "blob store backend: fs or s3 (env: RULEKIT_BLOB_STORE)")
 	flag.StringVar(&cfg.BlobDir, "blob-dir", env("RULEKIT_BLOB_DIR", ""), "directory for fs blob store (env: RULEKIT_BLOB_DIR)")
@@ -88,6 +103,10 @@ func Load() (*Config, error) {
 	cfg.AuthMode = AuthMode(*authMode)
 	cfg.SMTPPort = *smtpPort
 	cfg.SMTPUseTLS = *smtpTLS
+	cfg.RateLimit = *rateLimit
+	cfg.RateLimitRPS = *rateLimitRPS
+	cfg.RateLimitBurst = *rateLimitBurst
+	cfg.TrustedProxy = *trustedProxy
 
 	if cfg.BlobDir == "" {
 		cfg.BlobDir = filepath.Join(cfg.DataDir, "blobs")
@@ -128,6 +147,15 @@ func envInt(key string, fallback int) int {
 	if v := os.Getenv(key); v != "" {
 		if n, err := strconv.Atoi(v); err == nil {
 			return n
+		}
+	}
+	return fallback
+}
+
+func envFloat64(key string, fallback float64) float64 {
+	if v := os.Getenv(key); v != "" {
+		if f, err := strconv.ParseFloat(v, 64); err == nil {
+			return f
 		}
 	}
 	return fallback
