@@ -89,9 +89,10 @@ func (h *AdminHandler) DeleteUserRole(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-func (h *AdminHandler) CreateAPIToken(w http.ResponseWriter, r *http.Request) {
+// POST /v1/admin/keys
+// Body: { "name": "ci-pipeline", "namespace": "payments", "role": 2, "expires_in_days": 90 }
+func (h *AdminHandler) CreateAPIKey(w http.ResponseWriter, r *http.Request) {
 	var body struct {
-		UserID        string      `json:"user_id"`
 		Name          string      `json:"name"`
 		Namespace     string      `json:"namespace"`
 		Role          domain.Role `json:"role"`
@@ -101,25 +102,21 @@ func (h *AdminHandler) CreateAPIToken(w http.ResponseWriter, r *http.Request) {
 		WriteError(w, http.StatusBadRequest, "BAD_REQUEST", "invalid JSON body")
 		return
 	}
-	if body.UserID == "" || body.Name == "" || body.Namespace == "" {
-		WriteError(w, http.StatusBadRequest, "BAD_REQUEST", "user_id, name, and namespace are required")
+	if body.Name == "" || body.Namespace == "" {
+		WriteError(w, http.StatusBadRequest, "BAD_REQUEST", "name and namespace are required")
 		return
 	}
 
-	created, err := h.svc.CreateAPIToken(r.Context(), body.UserID, body.Name, body.Namespace, body.Role, body.ExpiresInDays)
+	created, err := h.svc.CreateAPIKey(r.Context(), body.Name, body.Namespace, body.Role, body.ExpiresInDays)
 	if err != nil {
-		if errors.Is(err, service.ErrNotFound) {
-			WriteError(w, http.StatusNotFound, "NOT_FOUND", "user not found")
-			return
-		}
-		WriteError(w, http.StatusInternalServerError, "INTERNAL", "failed to create token")
+		WriteError(w, http.StatusInternalServerError, "INTERNAL", "failed to create key")
 		return
 	}
 
-	// Return the raw token only on creation — it is never retrievable again.
+	// Return the raw key only on creation — it is never retrievable again.
 	WriteJSON(w, http.StatusCreated, map[string]any{
 		"id":         created.ID,
-		"token":      created.RawToken,
+		"key":        created.RawKey,
 		"name":       created.Name,
 		"namespace":  created.Namespace,
 		"role":       created.Role,
@@ -128,28 +125,26 @@ func (h *AdminHandler) CreateAPIToken(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func (h *AdminHandler) ListAPITokens(w http.ResponseWriter, r *http.Request) {
-	userID := r.URL.Query().Get("user_id")
-	if userID == "" {
-		WriteError(w, http.StatusBadRequest, "BAD_REQUEST", "user_id query param is required")
-		return
-	}
-	tokens, err := h.svc.ListAPITokens(r.Context(), userID)
+// GET /v1/admin/keys
+func (h *AdminHandler) ListAPIKeys(w http.ResponseWriter, r *http.Request) {
+	limit, offset := PageParams(r)
+	keys, err := h.svc.ListAPIKeys(r.Context(), limit, offset)
 	if err != nil {
-		WriteError(w, http.StatusInternalServerError, "INTERNAL", "failed to list tokens")
+		WriteError(w, http.StatusInternalServerError, "INTERNAL", "failed to list keys")
 		return
 	}
-	WriteJSON(w, http.StatusOK, tokens)
+	WriteJSON(w, http.StatusOK, keys)
 }
 
-func (h *AdminHandler) RevokeAPIToken(w http.ResponseWriter, r *http.Request) {
-	tokenID := r.PathValue("tokenID")
-	if err := h.svc.RevokeAPIToken(r.Context(), tokenID); err != nil {
+// DELETE /v1/admin/keys/{keyID}
+func (h *AdminHandler) RevokeAPIKey(w http.ResponseWriter, r *http.Request) {
+	keyID := r.PathValue("keyID")
+	if err := h.svc.RevokeAPIKey(r.Context(), keyID); err != nil {
 		if errors.Is(err, service.ErrNotFound) {
-			WriteError(w, http.StatusNotFound, "NOT_FOUND", "token not found or already revoked")
+			WriteError(w, http.StatusNotFound, "NOT_FOUND", "key not found or already revoked")
 			return
 		}
-		WriteError(w, http.StatusInternalServerError, "INTERNAL", "failed to revoke token")
+		WriteError(w, http.StatusInternalServerError, "INTERNAL", "failed to revoke key")
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)

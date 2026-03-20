@@ -14,28 +14,41 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/rulekit-dev/rulekit-registry/internal/domain"
-	"github.com/rulekit-dev/rulekit-registry/internal/jwtutil"
 	"github.com/rulekit-dev/rulekit-registry/internal/port"
+	"github.com/rulekit-dev/rulekit-registry/internal/util"
 )
 
 const (
 	otpTTL          = 10 * time.Minute
 	otpLength       = 6
-	refreshTokenTTL = jwtutil.RefreshTokenTTL
+	refreshTokenTTL = util.RefreshTokenTTL
 )
 
 type AuthService struct {
-	db        port.Datastore
-	mailer    port.Mailer
-	jwtSecret []byte
+	db            port.Datastore
+	mailer        port.Mailer
+	jwtSecret     []byte
+	adminPassword string
 }
 
-func NewAuthService(db port.Datastore, m port.Mailer, jwtSecret []byte) *AuthService {
-	return &AuthService{db: db, mailer: m, jwtSecret: jwtSecret}
+func NewAuthService(db port.Datastore, m port.Mailer, jwtSecret []byte, adminPassword string) *AuthService {
+	return &AuthService{db: db, mailer: m, jwtSecret: jwtSecret, adminPassword: adminPassword}
+}
+
+// AdminLogin verifies the admin password and returns a long-lived JWT.
+// Admin is a virtual identity — no DB record is created or required.
+func (s *AuthService) AdminLogin(ctx context.Context, password string) (*TokenPair, error) {
+	if password == "" || password != s.adminPassword {
+		return nil, ErrInvalidPassword
+	}
+	token, err := util.SignAdminToken(s.jwtSecret)
+	if err != nil {
+		return nil, fmt.Errorf("issue admin token: %w", err)
+	}
+	return &TokenPair{AccessToken: token}, nil
 }
 
 // Login looks up or auto-provisions the user and sends an OTP to their email.
-// Always returns without error to avoid email enumeration.
 func (s *AuthService) Login(ctx context.Context, email string) error {
 	email = strings.ToLower(strings.TrimSpace(email))
 
@@ -115,38 +128,34 @@ func (s *AuthService) Verify(ctx context.Context, email, code string) (*TokenPai
 		return nil, fmt.Errorf("load roles: %w", err)
 	}
 
-	accessToken, err := jwtutil.SignAccessToken(s.jwtSecret, user, roles)
+	accessToken, err := util.SignAccessToken(s.jwtSecret, user, roles)
 	if err != nil {
 		return nil, fmt.Errorf("issue access token: %w", err)
 	}
 
-	refreshToken, refreshHash, err := generateRefreshToken()
+	rawRefresh, refreshHash, err := generateRefreshToken()
 	if err != nil {
 		return nil, fmt.Errorf("generate refresh token: %w", err)
 	}
 
 	exp := time.Now().Add(refreshTokenTTL).UTC()
-	rt := &domain.APIToken{
+	rt := &domain.RefreshToken{
 		ID:        uuid.NewString(),
 		UserID:    user.ID,
-		Name:      "refresh",
 		TokenHash: refreshHash,
-		Namespace: "*",
-		Role:      0,
-		CreatedAt: time.Now().UTC(),
-		ExpiresAt: &exp,
+		ExpiresAt: exp,
 	}
-	if err := s.db.CreateAPIToken(ctx, rt); err != nil {
+	if err := s.db.CreateRefreshToken(ctx, rt); err != nil {
 		return nil, fmt.Errorf("store refresh token: %w", err)
 	}
 
-	return &TokenPair{AccessToken: accessToken, RefreshToken: refreshToken}, nil
+	return &TokenPair{AccessToken: accessToken, RefreshToken: rawRefresh}, nil
 }
 
 // Refresh validates a refresh token, rotates it, and returns a new token pair.
 func (s *AuthService) Refresh(ctx context.Context, rawRefreshToken string) (*TokenPair, error) {
 	tokenHash := HashString(rawRefreshToken)
-	rt, err := s.db.GetAPITokenByHash(ctx, tokenHash)
+	rt, err := s.db.GetRefreshTokenByHash(ctx, tokenHash)
 	if errors.Is(err, port.ErrNotFound) {
 		return nil, ErrInvalidToken
 	}
@@ -157,7 +166,7 @@ func (s *AuthService) Refresh(ctx context.Context, rawRefreshToken string) (*Tok
 	if rt.RevokedAt != nil {
 		return nil, ErrInvalidToken
 	}
-	if rt.ExpiresAt != nil && time.Now().After(*rt.ExpiresAt) {
+	if time.Now().After(rt.ExpiresAt) {
 		return nil, ErrInvalidToken
 	}
 
@@ -171,58 +180,54 @@ func (s *AuthService) Refresh(ctx context.Context, rawRefreshToken string) (*Tok
 		return nil, fmt.Errorf("load roles: %w", err)
 	}
 
-	accessToken, err := jwtutil.SignAccessToken(s.jwtSecret, user, roles)
+	accessToken, err := util.SignAccessToken(s.jwtSecret, user, roles)
 	if err != nil {
 		return nil, fmt.Errorf("issue access token: %w", err)
 	}
 
-	if err := s.db.RevokeAPIToken(ctx, rt.ID); err != nil {
+	if err := s.db.RevokeRefreshToken(ctx, rt.ID); err != nil {
 		return nil, fmt.Errorf("rotate refresh token: %w", err)
 	}
 
-	newRefreshToken, newRefreshHash, err := generateRefreshToken()
+	newRawRefresh, newRefreshHash, err := generateRefreshToken()
 	if err != nil {
 		return nil, fmt.Errorf("generate refresh token: %w", err)
 	}
 
 	exp := time.Now().Add(refreshTokenTTL).UTC()
-	newRT := &domain.APIToken{
+	newRT := &domain.RefreshToken{
 		ID:        uuid.NewString(),
 		UserID:    user.ID,
-		Name:      "refresh",
 		TokenHash: newRefreshHash,
-		Namespace: "*",
-		Role:      0,
-		CreatedAt: time.Now().UTC(),
-		ExpiresAt: &exp,
+		ExpiresAt: exp,
 	}
-	if err := s.db.CreateAPIToken(ctx, newRT); err != nil {
+	if err := s.db.CreateRefreshToken(ctx, newRT); err != nil {
 		return nil, fmt.Errorf("store refresh token: %w", err)
 	}
 
-	return &TokenPair{AccessToken: accessToken, RefreshToken: newRefreshToken}, nil
+	return &TokenPair{AccessToken: accessToken, RefreshToken: newRawRefresh}, nil
 }
 
-// Logout revokes the refresh token identified by rawRefreshToken.
-// Returns nil if the token is already gone.
+// Logout revokes the refresh token. Returns nil if already gone.
 func (s *AuthService) Logout(ctx context.Context, rawRefreshToken string) error {
 	tokenHash := HashString(rawRefreshToken)
-	rt, err := s.db.GetAPITokenByHash(ctx, tokenHash)
+	rt, err := s.db.GetRefreshTokenByHash(ctx, tokenHash)
 	if errors.Is(err, port.ErrNotFound) {
 		return nil
 	}
 	if err != nil {
 		return fmt.Errorf("look up token: %w", err)
 	}
-	if err := s.db.RevokeAPIToken(ctx, rt.ID); err != nil && !errors.Is(err, port.ErrNotFound) {
+	if err := s.db.RevokeRefreshToken(ctx, rt.ID); err != nil && !errors.Is(err, port.ErrNotFound) {
 		return fmt.Errorf("revoke token: %w", err)
 	}
 	return nil
 }
 
 var (
-	ErrInvalidCode  = errors.New("invalid or expired code")
-	ErrInvalidToken = errors.New("invalid or expired token")
+	ErrInvalidCode     = errors.New("invalid or expired code")
+	ErrInvalidToken    = errors.New("invalid or expired token")
+	ErrInvalidPassword = errors.New("invalid password")
 )
 
 func HashString(s string) string {

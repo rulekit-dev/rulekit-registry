@@ -7,8 +7,8 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/rulekit-dev/rulekit-registry/internal/jwtutil"
 	"github.com/rulekit-dev/rulekit-registry/internal/service"
+	"github.com/rulekit-dev/rulekit-registry/internal/util"
 )
 
 type AuthHandler struct {
@@ -19,9 +19,13 @@ func NewAuthHandler(svc service.AuthUseCase) *AuthHandler {
 	return &AuthHandler{svc: svc}
 }
 
+// POST /v1/auth/login
+// For admin: { "email": "admin", "password": "..." } → returns token immediately.
+// For users: { "email": "alice@example.com" } → sends OTP, returns 200.
 func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 	var body struct {
-		Email string `json:"email"`
+		Email    string `json:"email"`
+		Password string `json:"password"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		WriteError(w, http.StatusBadRequest, "BAD_REQUEST", "invalid JSON body")
@@ -33,6 +37,24 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if body.Email == "admin" {
+		pair, err := h.svc.AdminLogin(r.Context(), body.Password)
+		if err != nil {
+			if errors.Is(err, service.ErrInvalidPassword) {
+				WriteError(w, http.StatusUnauthorized, "UNAUTHORIZED", "invalid password")
+				return
+			}
+			WriteError(w, http.StatusInternalServerError, "INTERNAL", "failed to login")
+			return
+		}
+		WriteJSON(w, http.StatusOK, map[string]any{
+			"access_token": pair.AccessToken,
+			"token_type":   "Bearer",
+			"expires_in":   int(util.AdminTokenTTL.Seconds()),
+		})
+		return
+	}
+
 	if err := h.svc.Login(r.Context(), body.Email); err != nil {
 		WriteError(w, http.StatusInternalServerError, "INTERNAL", "failed to process login")
 		return
@@ -40,6 +62,8 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 	WriteJSON(w, http.StatusOK, map[string]string{"message": "OTP sent to email"})
 }
 
+// POST /v1/auth/verify
+// Body: { "email": "alice@example.com", "code": "123456" }
 func (h *AuthHandler) Verify(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		Email string `json:"email"`
@@ -70,10 +94,12 @@ func (h *AuthHandler) Verify(w http.ResponseWriter, r *http.Request) {
 		"access_token":  pair.AccessToken,
 		"refresh_token": pair.RefreshToken,
 		"token_type":    "Bearer",
-		"expires_in":    int(jwtutil.AccessTokenTTL.Seconds()),
+		"expires_in":    int(util.AccessTokenTTL.Seconds()),
 	})
 }
 
+// POST /v1/auth/refresh
+// Body: { "refresh_token": "<token>" }
 func (h *AuthHandler) Refresh(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		RefreshToken string `json:"refresh_token"`
@@ -101,10 +127,12 @@ func (h *AuthHandler) Refresh(w http.ResponseWriter, r *http.Request) {
 		"access_token":  pair.AccessToken,
 		"refresh_token": pair.RefreshToken,
 		"token_type":    "Bearer",
-		"expires_in":    int(jwtutil.AccessTokenTTL.Seconds()),
+		"expires_in":    int(util.AccessTokenTTL.Seconds()),
 	})
 }
 
+// POST /v1/auth/logout
+// Body: { "refresh_token": "<token>" }
 func (h *AuthHandler) Logout(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		RefreshToken string `json:"refresh_token"`
@@ -126,6 +154,6 @@ func (h *AuthHandler) Logout(w http.ResponseWriter, r *http.Request) {
 }
 
 // ClaimsContext attaches claims to a context (used by middleware).
-func ClaimsContext(ctx context.Context, claims *jwtutil.Claims) context.Context {
+func ClaimsContext(ctx context.Context, claims *util.Claims) context.Context {
 	return context.WithValue(ctx, ClaimsKey, claims)
 }

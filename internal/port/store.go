@@ -46,11 +46,16 @@ type Datastore interface {
 	MarkOTPUsed(ctx context.Context, otpID string) error
 	DeleteExpiredOTPs(ctx context.Context) error
 
-	// API token operations
-	CreateAPIToken(ctx context.Context, t *domain.APIToken) error
-	GetAPITokenByHash(ctx context.Context, tokenHash string) (*domain.APIToken, error)
-	ListAPITokens(ctx context.Context, userID string) ([]*domain.APIToken, error)
-	RevokeAPIToken(ctx context.Context, tokenID string) error
+	// Refresh token operations
+	CreateRefreshToken(ctx context.Context, t *domain.RefreshToken) error
+	GetRefreshTokenByHash(ctx context.Context, tokenHash string) (*domain.RefreshToken, error)
+	RevokeRefreshToken(ctx context.Context, tokenID string) error
+
+	// API key operations
+	CreateAPIKey(ctx context.Context, k *domain.APIKey) error
+	GetAPIKeyByHash(ctx context.Context, keyHash string) (*domain.APIKey, error)
+	ListAPIKeys(ctx context.Context, limit, offset int) ([]*domain.APIKey, error)
+	RevokeAPIKey(ctx context.Context, keyID string) error
 
 	// User role operations
 	UpsertUserRole(ctx context.Context, ur *domain.UserRole) error

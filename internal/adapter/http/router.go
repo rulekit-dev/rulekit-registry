@@ -16,17 +16,46 @@ import (
 // storePort is the narrow interface the HTTP adapter requires from the store.
 type storePort interface {
 	Ping(ctx context.Context) error
-	GetAPITokenByHash(ctx context.Context, hash string) (*domain.APIToken, error)
+	GetAPIKeyByHash(ctx context.Context, hash string) (*domain.APIKey, error)
 }
 
 func NewRouter(h *handler.RulesetHandler, auth *handler.AuthHandler, admin *handler.AdminHandler, db storePort, cfg *config.Config, startTime time.Time) http.Handler {
 	mux := http.NewServeMux()
+	secret := []byte(cfg.JWTSecret)
 
-	if cfg.AuthMode == config.AuthModeJWT {
-		registerJWTRoutes(mux, h, auth, admin, db, cfg)
-	} else {
-		registerLegacyRoutes(mux, h, cfg.APIKey)
-	}
+	// Public auth endpoints — no token required.
+	mux.HandleFunc("POST /v1/auth/login", auth.Login)
+	mux.HandleFunc("POST /v1/auth/verify", auth.Verify)
+	mux.HandleFunc("POST /v1/auth/refresh", auth.Refresh)
+	mux.Handle("POST /v1/auth/logout", apiTokenMiddleware(db, secret, http.HandlerFunc(auth.Logout)))
+
+	// Ruleset API: viewer+ for reads, editor+ for writes.
+	v1 := http.NewServeMux()
+	v1.Handle("GET /v1/rulesets", requireRole(domain.RoleViewer, http.HandlerFunc(h.ListRulesets)))
+	v1.Handle("POST /v1/rulesets", requireRole(domain.RoleEditor, http.HandlerFunc(h.CreateRuleset)))
+	v1.Handle("GET /v1/rulesets/{key}", requireRole(domain.RoleViewer, http.HandlerFunc(h.GetRuleset)))
+	v1.Handle("DELETE /v1/rulesets/{key}", requireRole(domain.RoleEditor, http.HandlerFunc(h.DeleteRuleset)))
+	v1.Handle("GET /v1/rulesets/{key}/draft", requireRole(domain.RoleEditor, http.HandlerFunc(h.GetDraft)))
+	v1.Handle("PUT /v1/rulesets/{key}/draft", requireRole(domain.RoleEditor, http.HandlerFunc(h.UpsertDraft)))
+	v1.Handle("DELETE /v1/rulesets/{key}/draft", requireRole(domain.RoleEditor, http.HandlerFunc(h.DeleteDraft)))
+	v1.Handle("POST /v1/rulesets/{key}/publish", requireRole(domain.RoleEditor, http.HandlerFunc(h.Publish)))
+	v1.Handle("GET /v1/rulesets/{key}/versions", requireRole(domain.RoleViewer, http.HandlerFunc(h.ListVersions)))
+	v1.Handle("GET /v1/rulesets/{key}/versions/latest", requireRole(domain.RoleViewer, http.HandlerFunc(h.GetLatestVersion)))
+	v1.Handle("GET /v1/rulesets/{key}/versions/latest/bundle", requireRole(domain.RoleViewer, http.HandlerFunc(h.GetLatestBundle)))
+	v1.Handle("GET /v1/rulesets/{key}/versions/{version}", requireRole(domain.RoleViewer, http.HandlerFunc(h.GetVersion)))
+	v1.Handle("GET /v1/rulesets/{key}/versions/{version}/bundle", requireRole(domain.RoleViewer, http.HandlerFunc(h.GetVersionBundle)))
+
+	// Admin API: admin role required.
+	v1.Handle("GET /v1/admin/users", requireAdmin(http.HandlerFunc(admin.ListUsers)))
+	v1.Handle("DELETE /v1/admin/users/{userID}", requireAdmin(http.HandlerFunc(admin.DeleteUser)))
+	v1.Handle("GET /v1/admin/users/{userID}/roles", requireAdmin(http.HandlerFunc(admin.ListUserRoles)))
+	v1.Handle("PUT /v1/admin/users/{userID}/roles/{namespace}", requireAdmin(http.HandlerFunc(admin.UpsertUserRole)))
+	v1.Handle("DELETE /v1/admin/users/{userID}/roles/{namespace}", requireAdmin(http.HandlerFunc(admin.DeleteUserRole)))
+	v1.Handle("POST /v1/admin/keys", requireAdmin(http.HandlerFunc(admin.CreateAPIKey)))
+	v1.Handle("GET /v1/admin/keys", requireAdmin(http.HandlerFunc(admin.ListAPIKeys)))
+	v1.Handle("DELETE /v1/admin/keys/{keyID}", requireAdmin(http.HandlerFunc(admin.RevokeAPIKey)))
+
+	mux.Handle("/v1/", apiTokenMiddleware(db, secret, v1))
 
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
 		ctx, cancel := context.WithTimeout(r.Context(), 500*time.Millisecond)
@@ -61,72 +90,4 @@ func NewRouter(h *handler.RulesetHandler, auth *handler.AuthHandler, admin *hand
 		root = corsMiddleware(cfg.CORSOrigins, root)
 	}
 	return loggingMiddleware(recoveryMiddleware(root))
-}
-
-func registerLegacyRoutes(mux *http.ServeMux, h *handler.RulesetHandler, apiKey string) {
-	v1 := http.NewServeMux()
-	registerRulesetRoutes(v1, h)
-
-	var v1Handler http.Handler = v1
-	if apiKey != "" {
-		v1Handler = authMiddleware(apiKey, v1)
-	}
-	mux.Handle("/v1/", v1Handler)
-}
-
-func registerJWTRoutes(mux *http.ServeMux, h *handler.RulesetHandler, auth *handler.AuthHandler, admin *handler.AdminHandler, db storePort, cfg *config.Config) {
-	secret := []byte(cfg.JWTSecret)
-
-	// Public auth endpoints — no token required.
-	mux.HandleFunc("POST /v1/auth/login", auth.Login)
-	mux.HandleFunc("POST /v1/auth/verify", auth.Verify)
-	mux.HandleFunc("POST /v1/auth/refresh", auth.Refresh)
-
-	// Logout requires a valid token to identify the session.
-	mux.Handle("POST /v1/auth/logout", apiTokenMiddleware(db, secret, http.HandlerFunc(auth.Logout)))
-
-	// Ruleset API: viewer+ for reads, editor+ for writes.
-	v1 := http.NewServeMux()
-	v1.Handle("GET /v1/rulesets", requireRole(domain.RoleViewer, http.HandlerFunc(h.ListRulesets)))
-	v1.Handle("POST /v1/rulesets", requireRole(domain.RoleEditor, http.HandlerFunc(h.CreateRuleset)))
-	v1.Handle("GET /v1/rulesets/{key}", requireRole(domain.RoleViewer, http.HandlerFunc(h.GetRuleset)))
-	v1.Handle("DELETE /v1/rulesets/{key}", requireRole(domain.RoleEditor, http.HandlerFunc(h.DeleteRuleset)))
-	v1.Handle("GET /v1/rulesets/{key}/draft", requireRole(domain.RoleEditor, http.HandlerFunc(h.GetDraft)))
-	v1.Handle("PUT /v1/rulesets/{key}/draft", requireRole(domain.RoleEditor, http.HandlerFunc(h.UpsertDraft)))
-	v1.Handle("DELETE /v1/rulesets/{key}/draft", requireRole(domain.RoleEditor, http.HandlerFunc(h.DeleteDraft)))
-	v1.Handle("POST /v1/rulesets/{key}/publish", requireRole(domain.RoleEditor, http.HandlerFunc(h.Publish)))
-	v1.Handle("GET /v1/rulesets/{key}/versions", requireRole(domain.RoleViewer, http.HandlerFunc(h.ListVersions)))
-	v1.Handle("GET /v1/rulesets/{key}/versions/latest", requireRole(domain.RoleViewer, http.HandlerFunc(h.GetLatestVersion)))
-	v1.Handle("GET /v1/rulesets/{key}/versions/latest/bundle", requireRole(domain.RoleViewer, http.HandlerFunc(h.GetLatestBundle)))
-	v1.Handle("GET /v1/rulesets/{key}/versions/{version}", requireRole(domain.RoleViewer, http.HandlerFunc(h.GetVersion)))
-	v1.Handle("GET /v1/rulesets/{key}/versions/{version}/bundle", requireRole(domain.RoleViewer, http.HandlerFunc(h.GetVersionBundle)))
-
-	// Admin API: admin role required.
-	v1.Handle("GET /v1/admin/users", requireAdmin(http.HandlerFunc(admin.ListUsers)))
-	v1.Handle("DELETE /v1/admin/users/{userID}", requireAdmin(http.HandlerFunc(admin.DeleteUser)))
-	v1.Handle("GET /v1/admin/users/{userID}/roles", requireAdmin(http.HandlerFunc(admin.ListUserRoles)))
-	v1.Handle("PUT /v1/admin/users/{userID}/roles/{namespace}", requireAdmin(http.HandlerFunc(admin.UpsertUserRole)))
-	v1.Handle("DELETE /v1/admin/users/{userID}/roles/{namespace}", requireAdmin(http.HandlerFunc(admin.DeleteUserRole)))
-	v1.Handle("POST /v1/admin/tokens", requireAdmin(http.HandlerFunc(admin.CreateAPIToken)))
-	v1.Handle("GET /v1/admin/tokens", requireAdmin(http.HandlerFunc(admin.ListAPITokens)))
-	v1.Handle("DELETE /v1/admin/tokens/{tokenID}", requireAdmin(http.HandlerFunc(admin.RevokeAPIToken)))
-
-	mux.Handle("/v1/", apiTokenMiddleware(db, secret, v1))
-}
-
-func registerRulesetRoutes(mux *http.ServeMux, h *handler.RulesetHandler) {
-	mux.HandleFunc("GET /v1/rulesets", h.ListRulesets)
-	mux.HandleFunc("POST /v1/rulesets", h.CreateRuleset)
-	mux.HandleFunc("GET /v1/rulesets/{key}", h.GetRuleset)
-	mux.HandleFunc("DELETE /v1/rulesets/{key}", h.DeleteRuleset)
-	mux.HandleFunc("GET /v1/rulesets/{key}/draft", h.GetDraft)
-	mux.HandleFunc("PUT /v1/rulesets/{key}/draft", h.UpsertDraft)
-	mux.HandleFunc("DELETE /v1/rulesets/{key}/draft", h.DeleteDraft)
-	mux.HandleFunc("POST /v1/rulesets/{key}/publish", h.Publish)
-	mux.HandleFunc("GET /v1/rulesets/{key}/versions", h.ListVersions)
-	// "latest" routes must be registered before {version} so the more-specific pattern wins.
-	mux.HandleFunc("GET /v1/rulesets/{key}/versions/latest", h.GetLatestVersion)
-	mux.HandleFunc("GET /v1/rulesets/{key}/versions/latest/bundle", h.GetLatestBundle)
-	mux.HandleFunc("GET /v1/rulesets/{key}/versions/{version}", h.GetVersion)
-	mux.HandleFunc("GET /v1/rulesets/{key}/versions/{version}/bundle", h.GetVersionBundle)
 }

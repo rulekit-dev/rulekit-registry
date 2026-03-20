@@ -1,4 +1,4 @@
-package jwtutil
+package util
 
 import (
 	"errors"
@@ -12,6 +12,7 @@ import (
 
 const (
 	AccessTokenTTL  = 15 * time.Minute
+	AdminTokenTTL   = 24 * time.Hour
 	RefreshTokenTTL = 7 * 24 * time.Hour
 )
 
@@ -36,12 +37,21 @@ func SignAccessToken(secret []byte, user *domain.User, roles []*domain.UserRole)
 		Email: user.Email,
 		Roles: toRoleClaims(roles),
 	}
-	t := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
-	token, err := t.SignedString(secret)
-	if err != nil {
-		return "", fmt.Errorf("jwtutil: sign: %w", err)
+	return signClaims(secret, claims)
+}
+
+// SignAdminToken issues a long-lived token for the virtual admin identity.
+func SignAdminToken(secret []byte) (string, error) {
+	claims := Claims{
+		RegisteredClaims: jwt.RegisteredClaims{
+			Subject:   "admin",
+			ExpiresAt: jwt.NewNumericDate(time.Now().Add(AdminTokenTTL)),
+			IssuedAt:  jwt.NewNumericDate(time.Now()),
+		},
+		Email: "admin",
+		Roles: []RoleClaim{{Namespace: "*", RoleMask: domain.RoleAdmin}},
 	}
-	return token, nil
+	return signClaims(secret, claims)
 }
 
 func ParseAccessToken(secret []byte, tokenStr string) (*Claims, error) {
@@ -69,6 +79,21 @@ var (
 	ErrTokenInvalid = errors.New("token invalid")
 )
 
+// RoleForNamespace returns the effective role mask for a namespace.
+// A global role (namespace="*") supersedes namespace-specific roles.
+func (c *Claims) RoleForNamespace(namespace string) domain.Role {
+	var mask domain.Role
+	for _, r := range c.Roles {
+		if r.Namespace == "*" {
+			return r.RoleMask
+		}
+		if r.Namespace == namespace {
+			mask = r.RoleMask
+		}
+	}
+	return mask
+}
+
 func toRoleClaims(roles []*domain.UserRole) []RoleClaim {
 	out := make([]RoleClaim, len(roles))
 	for i, r := range roles {
@@ -77,17 +102,11 @@ func toRoleClaims(roles []*domain.UserRole) []RoleClaim {
 	return out
 }
 
-// RoleForNamespace returns the effective role mask for a namespace.
-// A global role (namespace="*") supersedes namespace-specific roles.
-func (c *Claims) RoleForNamespace(namespace string) domain.Role {
-	var mask domain.Role
-	for _, r := range c.Roles {
-		if r.Namespace == "*" {
-			return r.RoleMask // global role applies everywhere
-		}
-		if r.Namespace == namespace {
-			mask = r.RoleMask
-		}
+func signClaims(secret []byte, claims Claims) (string, error) {
+	t := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+	token, err := t.SignedString(secret)
+	if err != nil {
+		return "", fmt.Errorf("jwtutil: sign: %w", err)
 	}
-	return mask
+	return token, nil
 }

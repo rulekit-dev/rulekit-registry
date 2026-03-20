@@ -2,7 +2,6 @@ package httpadapter
 
 import (
 	"crypto/sha256"
-	"crypto/subtle"
 	"encoding/hex"
 	"errors"
 	"log/slog"
@@ -13,8 +12,8 @@ import (
 
 	"github.com/rulekit-dev/rulekit-registry/internal/adapter/http/handler"
 	"github.com/rulekit-dev/rulekit-registry/internal/domain"
-	"github.com/rulekit-dev/rulekit-registry/internal/jwtutil"
 	"github.com/rulekit-dev/rulekit-registry/internal/port"
+	"github.com/rulekit-dev/rulekit-registry/internal/util"
 )
 
 type responseWriter struct {
@@ -41,41 +40,7 @@ func loggingMiddleware(next http.Handler) http.Handler {
 	})
 }
 
-// authMiddleware handles the legacy single-API-key mode (AuthMode=none).
-func authMiddleware(apiKey string, next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		token := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
-		if subtle.ConstantTimeCompare([]byte(token), []byte(apiKey)) != 1 {
-			handler.WriteError(w, http.StatusUnauthorized, "UNAUTHORIZED", "invalid or missing API key")
-			return
-		}
-		next.ServeHTTP(w, r)
-	})
-}
-
-// jwtAuthMiddleware validates a JWT access token and attaches claims to context.
-func jwtAuthMiddleware(secret []byte, next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		token := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
-		if token == "" {
-			handler.WriteError(w, http.StatusUnauthorized, "UNAUTHORIZED", "missing Authorization header")
-			return
-		}
-		claims, err := jwtutil.ParseAccessToken(secret, token)
-		if errors.Is(err, jwtutil.ErrTokenExpired) {
-			handler.WriteError(w, http.StatusUnauthorized, "TOKEN_EXPIRED", "access token has expired")
-			return
-		}
-		if err != nil {
-			handler.WriteError(w, http.StatusUnauthorized, "UNAUTHORIZED", "invalid access token")
-			return
-		}
-		ctx := handler.ClaimsContext(r.Context(), claims)
-		next.ServeHTTP(w, r.WithContext(ctx))
-	})
-}
-
-// apiTokenMiddleware tries JWT first, falls back to opaque DB token lookup.
+// apiTokenMiddleware tries JWT first, then falls back to opaque API key lookup.
 func apiTokenMiddleware(db storePort, secret []byte, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		raw := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
@@ -85,21 +50,21 @@ func apiTokenMiddleware(db storePort, secret []byte, next http.Handler) http.Han
 		}
 
 		// Try JWT first.
-		claims, err := jwtutil.ParseAccessToken(secret, raw)
+		claims, err := util.ParseAccessToken(secret, raw)
 		if err == nil {
 			ctx := handler.ClaimsContext(r.Context(), claims)
 			next.ServeHTTP(w, r.WithContext(ctx))
 			return
 		}
-		if errors.Is(err, jwtutil.ErrTokenExpired) {
+		if errors.Is(err, util.ErrTokenExpired) {
 			handler.WriteError(w, http.StatusUnauthorized, "TOKEN_EXPIRED", "access token has expired")
 			return
 		}
 
-		// Fall back to opaque API token lookup.
+		// Fall back to opaque API key lookup.
 		sum := sha256.Sum256([]byte(raw))
-		tokenHash := hex.EncodeToString(sum[:])
-		t, dbErr := db.GetAPITokenByHash(r.Context(), tokenHash)
+		keyHash := hex.EncodeToString(sum[:])
+		k, dbErr := db.GetAPIKeyByHash(r.Context(), keyHash)
 		if errors.Is(dbErr, port.ErrNotFound) {
 			handler.WriteError(w, http.StatusUnauthorized, "UNAUTHORIZED", "invalid or missing token")
 			return
@@ -108,21 +73,19 @@ func apiTokenMiddleware(db storePort, secret []byte, next http.Handler) http.Han
 			handler.WriteError(w, http.StatusInternalServerError, "INTERNAL", "failed to validate token")
 			return
 		}
-		if t.RevokedAt != nil {
+		if k.RevokedAt != nil {
 			handler.WriteError(w, http.StatusUnauthorized, "UNAUTHORIZED", "token has been revoked")
 			return
 		}
-		if t.ExpiresAt != nil && time.Now().After(*t.ExpiresAt) {
+		if k.ExpiresAt != nil && time.Now().After(*k.ExpiresAt) {
 			handler.WriteError(w, http.StatusUnauthorized, "UNAUTHORIZED", "token has expired")
 			return
 		}
 
-		// Synthesise claims from the token so handler RBAC checks are uniform.
-		synth := &jwtutil.Claims{
-			Email: "",
-			Roles: []jwtutil.RoleClaim{{Namespace: t.Namespace, RoleMask: t.Role}},
+		// Synthesise claims from the API key so downstream RBAC checks are uniform.
+		synth := &util.Claims{
+			Roles: []util.RoleClaim{{Namespace: k.Namespace, RoleMask: k.Role}},
 		}
-		synth.Subject = t.UserID
 		ctx := handler.ClaimsContext(r.Context(), synth)
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
@@ -156,7 +119,6 @@ func requireAdmin(next http.Handler) http.Handler {
 }
 
 // corsMiddleware adds CORS headers based on a comma-separated allowlist.
-// Pass "*" to allow all origins.
 func corsMiddleware(origins string, next http.Handler) http.Handler {
 	allowed := make(map[string]bool)
 	wildcard := false

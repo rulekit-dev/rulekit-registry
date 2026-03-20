@@ -53,18 +53,25 @@ CREATE TABLE IF NOT EXISTS otp_codes (
     used_at    TIMESTAMPTZ
 );
 CREATE INDEX IF NOT EXISTS idx_otp_codes_user_id ON otp_codes(user_id);
-CREATE TABLE IF NOT EXISTS api_tokens (
+CREATE TABLE IF NOT EXISTS refresh_tokens (
     id         TEXT        NOT NULL PRIMARY KEY,
     user_id    TEXT        NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    name       TEXT        NOT NULL,
     token_hash TEXT        NOT NULL UNIQUE,
+    expires_at TIMESTAMPTZ NOT NULL,
+    revoked_at TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS idx_refresh_tokens_token_hash ON refresh_tokens(token_hash);
+CREATE TABLE IF NOT EXISTS api_keys (
+    id         TEXT        NOT NULL PRIMARY KEY,
+    name       TEXT        NOT NULL,
+    key_hash   TEXT        NOT NULL UNIQUE,
     namespace  TEXT        NOT NULL,
     role       INTEGER     NOT NULL,
     created_at TIMESTAMPTZ NOT NULL,
     expires_at TIMESTAMPTZ,
     revoked_at TIMESTAMPTZ
 );
-CREATE INDEX IF NOT EXISTS idx_api_tokens_token_hash ON api_tokens(token_hash);
+CREATE INDEX IF NOT EXISTS idx_api_keys_key_hash ON api_keys(key_hash);
 CREATE TABLE IF NOT EXISTS user_roles (
     user_id   TEXT    NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     namespace TEXT    NOT NULL,
@@ -433,17 +440,61 @@ func (s *PostgresStore) DeleteExpiredOTPs(ctx context.Context) error {
 	return err
 }
 
-// --- API token ---
+// --- Refresh token ---
 
-func (s *PostgresStore) CreateAPIToken(ctx context.Context, t *domain.APIToken) error {
+func (s *PostgresStore) CreateRefreshToken(ctx context.Context, t *domain.RefreshToken) error {
+	_, err := s.db.ExecContext(ctx,
+		`INSERT INTO refresh_tokens (id, user_id, token_hash, expires_at) VALUES ($1, $2, $3, $4)`,
+		t.ID, t.UserID, t.TokenHash, t.ExpiresAt.UTC())
+	return err
+}
+
+func (s *PostgresStore) GetRefreshTokenByHash(ctx context.Context, tokenHash string) (*domain.RefreshToken, error) {
+	t := &domain.RefreshToken{}
+	var exp time.Time
+	var rev sql.NullTime
+	err := s.db.QueryRowContext(ctx,
+		`SELECT id, user_id, token_hash, expires_at, revoked_at FROM refresh_tokens WHERE token_hash = $1`,
+		tokenHash).Scan(&t.ID, &t.UserID, &t.TokenHash, &exp, &rev)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, port.ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	t.ExpiresAt = exp.UTC()
+	if rev.Valid {
+		tt := rev.Time.UTC()
+		t.RevokedAt = &tt
+	}
+	return t, nil
+}
+
+func (s *PostgresStore) RevokeRefreshToken(ctx context.Context, tokenID string) error {
+	res, err := s.db.ExecContext(ctx,
+		`UPDATE refresh_tokens SET revoked_at = $1 WHERE id = $2 AND revoked_at IS NULL`,
+		time.Now().UTC(), tokenID)
+	if err != nil {
+		return err
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return port.ErrNotFound
+	}
+	return nil
+}
+
+// --- API key ---
+
+func (s *PostgresStore) CreateAPIKey(ctx context.Context, k *domain.APIKey) error {
 	var exp interface{}
-	if t.ExpiresAt != nil {
-		exp = t.ExpiresAt.UTC()
+	if k.ExpiresAt != nil {
+		exp = k.ExpiresAt.UTC()
 	}
 	_, err := s.db.ExecContext(ctx,
-		`INSERT INTO api_tokens (id, user_id, name, token_hash, namespace, role, created_at, expires_at)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
-		t.ID, t.UserID, t.Name, t.TokenHash, t.Namespace, int(t.Role), t.CreatedAt.UTC(), exp)
+		`INSERT INTO api_keys (id, name, key_hash, namespace, role, created_at, expires_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+		k.ID, k.Name, k.KeyHash, k.Namespace, int(k.Role), k.CreatedAt.UTC(), exp)
 	if err != nil {
 		if isUniqueViolation(err) {
 			return port.ErrAlreadyExists
@@ -453,68 +504,68 @@ func (s *PostgresStore) CreateAPIToken(ctx context.Context, t *domain.APIToken) 
 	return nil
 }
 
-func (s *PostgresStore) GetAPITokenByHash(ctx context.Context, tokenHash string) (*domain.APIToken, error) {
-	t := &domain.APIToken{}
+func (s *PostgresStore) GetAPIKeyByHash(ctx context.Context, keyHash string) (*domain.APIKey, error) {
+	k := &domain.APIKey{}
 	var role int
 	var exp, rev sql.NullTime
 	err := s.db.QueryRowContext(ctx,
-		`SELECT id, user_id, name, token_hash, namespace, role, created_at, expires_at, revoked_at
-         FROM api_tokens WHERE token_hash = $1`, tokenHash).
-		Scan(&t.ID, &t.UserID, &t.Name, &t.TokenHash, &t.Namespace, &role, &t.CreatedAt, &exp, &rev)
+		`SELECT id, name, key_hash, namespace, role, created_at, expires_at, revoked_at
+         FROM api_keys WHERE key_hash = $1`, keyHash).
+		Scan(&k.ID, &k.Name, &k.KeyHash, &k.Namespace, &role, &k.CreatedAt, &exp, &rev)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, port.ErrNotFound
 	}
 	if err != nil {
 		return nil, err
 	}
-	t.Role = domain.Role(role)
-	t.CreatedAt = t.CreatedAt.UTC()
+	k.Role = domain.Role(role)
+	k.CreatedAt = k.CreatedAt.UTC()
 	if exp.Valid {
 		tt := exp.Time.UTC()
-		t.ExpiresAt = &tt
+		k.ExpiresAt = &tt
 	}
 	if rev.Valid {
 		tt := rev.Time.UTC()
-		t.RevokedAt = &tt
+		k.RevokedAt = &tt
 	}
-	return t, nil
+	return k, nil
 }
 
-func (s *PostgresStore) ListAPITokens(ctx context.Context, userID string) ([]*domain.APIToken, error) {
+func (s *PostgresStore) ListAPIKeys(ctx context.Context, limit, offset int) ([]*domain.APIKey, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT id, user_id, name, token_hash, namespace, role, created_at, expires_at, revoked_at
-         FROM api_tokens WHERE user_id = $1 ORDER BY created_at DESC`, userID)
+		`SELECT id, name, key_hash, namespace, role, created_at, expires_at, revoked_at
+         FROM api_keys ORDER BY created_at DESC LIMIT $1 OFFSET $2`, limit, offset)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var out []*domain.APIToken
+	var out []*domain.APIKey
 	for rows.Next() {
-		t := &domain.APIToken{}
+		k := &domain.APIKey{}
 		var role int
 		var exp, rev sql.NullTime
-		if err := rows.Scan(&t.ID, &t.UserID, &t.Name, &t.TokenHash, &t.Namespace, &role, &t.CreatedAt, &exp, &rev); err != nil {
+		if err := rows.Scan(&k.ID, &k.Name, &k.KeyHash, &k.Namespace, &role, &k.CreatedAt, &exp, &rev); err != nil {
 			return nil, err
 		}
-		t.Role = domain.Role(role)
-		t.CreatedAt = t.CreatedAt.UTC()
+		k.Role = domain.Role(role)
+		k.CreatedAt = k.CreatedAt.UTC()
 		if exp.Valid {
 			tt := exp.Time.UTC()
-			t.ExpiresAt = &tt
+			k.ExpiresAt = &tt
 		}
 		if rev.Valid {
 			tt := rev.Time.UTC()
-			t.RevokedAt = &tt
+			k.RevokedAt = &tt
 		}
-		out = append(out, t)
+		out = append(out, k)
 	}
 	return out, rows.Err()
 }
 
-func (s *PostgresStore) RevokeAPIToken(ctx context.Context, tokenID string) error {
+func (s *PostgresStore) RevokeAPIKey(ctx context.Context, keyID string) error {
 	res, err := s.db.ExecContext(ctx,
-		`UPDATE api_tokens SET revoked_at = $1 WHERE id = $2 AND revoked_at IS NULL`,
-		time.Now().UTC(), tokenID)
+		`UPDATE api_keys SET revoked_at = $1 WHERE id = $2 AND revoked_at IS NULL`,
+		time.Now().UTC(), keyID)
 	if err != nil {
 		return err
 	}

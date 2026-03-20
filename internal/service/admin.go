@@ -62,57 +62,53 @@ func (s *AdminService) DeleteUserRole(ctx context.Context, userID, namespace str
 	return mapErr(s.db.DeleteUserRole(ctx, userID, namespace))
 }
 
-type CreatedToken struct {
-	domain.APIToken
-	RawToken string
+// CreatedKey wraps the newly created APIKey and includes the raw token shown once.
+type CreatedKey struct {
+	domain.APIKey
+	RawKey string
 }
 
-func (s *AdminService) CreateAPIToken(ctx context.Context, userID, name, namespace string, role domain.Role, expiresInDays int) (*CreatedToken, error) {
-	if _, err := s.db.GetUserByID(ctx, userID); err != nil {
-		return nil, mapErr(err)
-	}
-
-	raw, tokenHash, err := generateAPITokenValue()
+func (s *AdminService) CreateAPIKey(ctx context.Context, name, namespace string, role domain.Role, expiresInDays int) (*CreatedKey, error) {
+	raw, keyHash, err := generateAPIKeyValue()
 	if err != nil {
-		return nil, fmt.Errorf("generate token: %w", err)
+		return nil, fmt.Errorf("generate key: %w", err)
 	}
 
-	t := &domain.APIToken{
+	k := &domain.APIKey{
 		ID:        uuid.NewString(),
-		UserID:    userID,
 		Name:      name,
-		TokenHash: tokenHash,
+		KeyHash:   keyHash,
 		Namespace: namespace,
 		Role:      role,
 		CreatedAt: time.Now().UTC(),
 	}
 	if expiresInDays > 0 {
 		exp := time.Now().Add(time.Duration(expiresInDays) * 24 * time.Hour).UTC()
-		t.ExpiresAt = &exp
+		k.ExpiresAt = &exp
 	}
 
-	if err := s.db.CreateAPIToken(ctx, t); err != nil {
+	if err := s.db.CreateAPIKey(ctx, k); err != nil {
 		return nil, err
 	}
-	return &CreatedToken{APIToken: *t, RawToken: raw}, nil
+	return &CreatedKey{APIKey: *k, RawKey: raw}, nil
 }
 
-func (s *AdminService) ListAPITokens(ctx context.Context, userID string) ([]*domain.APIToken, error) {
-	tokens, err := s.db.ListAPITokens(ctx, userID)
+func (s *AdminService) ListAPIKeys(ctx context.Context, limit, offset int) ([]*domain.APIKey, error) {
+	keys, err := s.db.ListAPIKeys(ctx, limit, offset)
 	if err != nil {
 		return nil, err
 	}
-	if tokens == nil {
-		tokens = []*domain.APIToken{}
+	if keys == nil {
+		keys = []*domain.APIKey{}
 	}
-	return tokens, nil
+	return keys, nil
 }
 
-func (s *AdminService) RevokeAPIToken(ctx context.Context, tokenID string) error {
-	return mapErr(s.db.RevokeAPIToken(ctx, tokenID))
+func (s *AdminService) RevokeAPIKey(ctx context.Context, keyID string) error {
+	return mapErr(s.db.RevokeAPIKey(ctx, keyID))
 }
 
-func generateAPITokenValue() (raw, hash string, err error) {
+func generateAPIKeyValue() (raw, hash string, err error) {
 	b := make([]byte, 32)
 	if _, err = rand.Read(b); err != nil {
 		return "", "", err

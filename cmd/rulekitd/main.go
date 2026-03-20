@@ -9,17 +9,14 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/google/uuid"
-
 	httpadapter "github.com/rulekit-dev/rulekit-registry/internal/adapter/http"
 	"github.com/rulekit-dev/rulekit-registry/internal/adapter/http/handler"
 	fsblobstore "github.com/rulekit-dev/rulekit-registry/internal/adapter/blob/fs"
 	s3blob "github.com/rulekit-dev/rulekit-registry/internal/adapter/blob/s3"
 	"github.com/rulekit-dev/rulekit-registry/internal/adapter/mailer"
-	sqlitestore "github.com/rulekit-dev/rulekit-registry/internal/adapter/store/sqlite"
 	postgresstore "github.com/rulekit-dev/rulekit-registry/internal/adapter/store/postgres"
+	sqlitestore "github.com/rulekit-dev/rulekit-registry/internal/adapter/store/sqlite"
 	"github.com/rulekit-dev/rulekit-registry/internal/config"
-	"github.com/rulekit-dev/rulekit-registry/internal/domain"
 	"github.com/rulekit-dev/rulekit-registry/internal/port"
 	"github.com/rulekit-dev/rulekit-registry/internal/service"
 )
@@ -103,17 +100,12 @@ func main() {
 	}
 
 	rulesetSvc := service.NewRulesetService(db, blobs)
-	rulesetHandler := handler.NewRulesetHandler(rulesetSvc)
+	authSvc := service.NewAuthService(db, m, []byte(cfg.JWTSecret), cfg.AdminPassword)
+	adminSvc := service.NewAdminService(db)
 
-	var authHandler *handler.AuthHandler
-	var adminHandler *handler.AdminHandler
-	if cfg.AuthMode == config.AuthModeJWT {
-		authSvc := service.NewAuthService(db, m, []byte(cfg.JWTSecret))
-		adminSvc := service.NewAdminService(db)
-		authHandler = handler.NewAuthHandler(authSvc)
-		adminHandler = handler.NewAdminHandler(adminSvc)
-		bootstrapAdmin(db, cfg.AdminEmail)
-	}
+	rulesetHandler := handler.NewRulesetHandler(rulesetSvc)
+	authHandler := handler.NewAuthHandler(authSvc)
+	adminHandler := handler.NewAdminHandler(adminSvc)
 
 	httpHandler := httpadapter.NewRouter(rulesetHandler, authHandler, adminHandler, db, cfg, startTime)
 
@@ -127,7 +119,7 @@ func main() {
 
 	serverErr := make(chan error, 1)
 	go func() {
-		slog.Info("rulekitd starting", "addr", cfg.Addr, "store", cfg.Store, "auth", cfg.AuthMode)
+		slog.Info("rulekitd starting", "addr", cfg.Addr, "store", cfg.Store)
 		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			serverErr <- err
 		}
@@ -154,39 +146,4 @@ func main() {
 	}
 
 	slog.Info("server stopped")
-}
-
-// bootstrapAdmin ensures the configured admin email exists with a global admin role.
-// Safe to call on every startup — idempotent.
-func bootstrapAdmin(db port.Datastore, email string) {
-	if email == "" {
-		return
-	}
-	ctx := context.Background()
-
-	user, err := db.GetUserByEmail(ctx, email)
-	if err != nil {
-		now := time.Now().UTC()
-		user = &domain.User{
-			ID:          uuid.NewString(),
-			Email:       email,
-			CreatedAt:   now,
-			LastLoginAt: now,
-		}
-		if err := db.CreateUser(ctx, user); err != nil {
-			slog.Error("bootstrap admin: failed to create user", "error", err)
-			return
-		}
-	}
-
-	if err := db.UpsertUserRole(ctx, &domain.UserRole{
-		UserID:    user.ID,
-		Namespace: "*",
-		RoleMask:  domain.RoleAdmin,
-	}); err != nil {
-		slog.Error("bootstrap admin: failed to assign admin role", "error", err)
-		return
-	}
-
-	slog.Info("bootstrap admin ready", "email", email)
 }

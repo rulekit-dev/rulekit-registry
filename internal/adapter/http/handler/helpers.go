@@ -7,7 +7,7 @@ import (
 	"regexp"
 	"strconv"
 
-	"github.com/rulekit-dev/rulekit-registry/internal/jwtutil"
+	"github.com/rulekit-dev/rulekit-registry/internal/util"
 )
 
 var identPattern = regexp.MustCompile(`^[a-z0-9_-]+$`)
@@ -61,7 +61,7 @@ type contextKey int
 
 const ClaimsKey contextKey = iota
 
-func ClaimsFromContext(ctx context.Context) *jwtutil.Claims {
-	v, _ := ctx.Value(ClaimsKey).(*jwtutil.Claims)
+func ClaimsFromContext(ctx context.Context) *util.Claims {
+	v, _ := ctx.Value(ClaimsKey).(*util.Claims)
 	return v
 }

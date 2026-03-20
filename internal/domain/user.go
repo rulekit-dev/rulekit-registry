@@ -2,11 +2,10 @@ package domain
 
 import "time"
 
-// Role bits for bitwise permission checks.
 const (
-	RoleViewer Role = 1 << 0 // read published versions and bundles
-	RoleEditor Role = 1 << 1 // create, edit, and publish rulesets
-	RoleAdmin  Role = 1 << 2 // manage users, namespaces, and tokens
+	RoleViewer Role = 1 << 0                    // read published versions and bundles
+	RoleEditor Role = RoleViewer | 1<<1         // create, edit, and publish rulesets (implies viewer)
+	RoleAdmin  Role = RoleEditor | 1<<2         // manage users, namespaces, and keys (implies editor+viewer)
 )
 
 type Role int
@@ -28,12 +27,20 @@ type OTPCode struct {
 	UsedAt    *time.Time
 }
 
-// APIToken is a long-lived opaque token issued to CLI/CI/SDK consumers.
-type APIToken struct {
+// RefreshToken is a short-lived token issued at login and rotated on each refresh.
+type RefreshToken struct {
+	ID        string
+	UserID    string
+	TokenHash string // SHA-256 hex; never returned to callers
+	ExpiresAt time.Time
+	RevokedAt *time.Time
+}
+
+// APIKey is a long-lived credential for machine/CLI access, not tied to a user.
+type APIKey struct {
 	ID        string     `json:"id"`
-	UserID    string     `json:"user_id"`
 	Name      string     `json:"name"`
-	TokenHash string     `json:"-"` // SHA-256 hex; never returned in responses
+	KeyHash   string     `json:"-"` // SHA-256 hex; never returned in responses
 	Namespace string     `json:"namespace"`
 	Role      Role       `json:"role"`
 	CreatedAt time.Time  `json:"created_at"`
@@ -41,8 +48,6 @@ type APIToken struct {
 	RevokedAt *time.Time `json:"revoked_at,omitempty"`
 }
 
-// UserRole binds a user to a role bitmask within a namespace.
-// namespace="*" means the role applies globally (used for admins).
 type UserRole struct {
 	UserID    string `json:"user_id"`
 	Namespace string `json:"namespace"`

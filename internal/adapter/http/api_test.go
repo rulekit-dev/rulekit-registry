@@ -11,17 +11,19 @@ import (
 	httpadapter "github.com/rulekit-dev/rulekit-registry/internal/adapter/http"
 	"github.com/rulekit-dev/rulekit-registry/internal/adapter/http/handler"
 	fsblobstore "github.com/rulekit-dev/rulekit-registry/internal/adapter/blob/fs"
+	"github.com/rulekit-dev/rulekit-registry/internal/adapter/mailer"
 	sqlitestore "github.com/rulekit-dev/rulekit-registry/internal/adapter/store/sqlite"
 	"github.com/rulekit-dev/rulekit-registry/internal/config"
 	"github.com/rulekit-dev/rulekit-registry/internal/domain"
 	"github.com/rulekit-dev/rulekit-registry/internal/service"
+	"github.com/rulekit-dev/rulekit-registry/internal/util"
 )
 
-func legacyCfg(apiKey string) *config.Config {
-	return &config.Config{AuthMode: config.AuthModeNone, APIKey: apiKey}
-}
+const testJWTSecret = "test-secret-for-tests"
+const testAdminPassword = "test-admin-pass"
 
-func newTestServer(t *testing.T) *httptest.Server {
+// newTestServer returns a test HTTP server and a pre-signed admin token for auth.
+func newTestServer(t *testing.T) (*httptest.Server, string) {
 	t.Helper()
 	dir := t.TempDir()
 
@@ -40,9 +42,26 @@ func newTestServer(t *testing.T) *httptest.Server {
 		blobs.Close()
 	})
 
-	svc := service.NewRulesetService(db, blobs)
-	h := handler.NewRulesetHandler(svc)
-	return httptest.NewServer(httpadapter.NewRouter(h, nil, nil, db, legacyCfg(""), time.Now()))
+	cfg := &config.Config{
+		JWTSecret:     testJWTSecret,
+		AdminPassword: testAdminPassword,
+	}
+
+	rulesetSvc := service.NewRulesetService(db, blobs)
+	authSvc := service.NewAuthService(db, mailer.NewStdout(), []byte(testJWTSecret), testAdminPassword)
+	adminSvc := service.NewAdminService(db)
+
+	h := handler.NewRulesetHandler(rulesetSvc)
+	authHandler := handler.NewAuthHandler(authSvc)
+	adminHandler := handler.NewAdminHandler(adminSvc)
+
+	token, err := util.SignAdminToken([]byte(testJWTSecret))
+	if err != nil {
+		t.Fatalf("SignAdminToken: %v", err)
+	}
+
+	srv := httptest.NewServer(httpadapter.NewRouter(h, authHandler, adminHandler, db, cfg, time.Now()))
+	return srv, token
 }
 
 func mustJSON(t *testing.T, v any) *bytes.Buffer {
@@ -59,6 +78,39 @@ func decode(t *testing.T, resp *http.Response, v any) {
 	if err := json.NewDecoder(resp.Body).Decode(v); err != nil {
 		t.Fatalf("decode response: %v", err)
 	}
+}
+
+func authGet(t *testing.T, token, url string) *http.Response {
+	t.Helper()
+	req, _ := http.NewRequest(http.MethodGet, url, nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("GET %s: %v", url, err)
+	}
+	return resp
+}
+
+func authPost(t *testing.T, token, url string, body *bytes.Buffer) *http.Response {
+	t.Helper()
+	req, _ := http.NewRequest(http.MethodPost, url, body)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+token)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("POST %s: %v", url, err)
+	}
+	return resp
+}
+
+func authDo(t *testing.T, token string, req *http.Request) *http.Response {
+	t.Helper()
+	req.Header.Set("Authorization", "Bearer "+token)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("%s %s: %v", req.Method, req.URL, err)
+	}
+	return resp
 }
 
 var validDSL = map[string]any{
@@ -82,7 +134,7 @@ var validDSL = map[string]any{
 // --- Healthz ---
 
 func TestHealthz(t *testing.T) {
-	srv := newTestServer(t)
+	srv, _ := newTestServer(t)
 	defer srv.Close()
 
 	resp, err := http.Get(srv.URL + "/healthz")
@@ -99,24 +151,17 @@ func TestHealthz(t *testing.T) {
 // --- Rulesets ---
 
 func TestCreateAndGetRuleset(t *testing.T) {
-	srv := newTestServer(t)
+	srv, token := newTestServer(t)
 	defer srv.Close()
 
-	resp, err := http.Post(srv.URL+"/v1/rulesets", "application/json",
-		mustJSON(t, map[string]string{"key": "my-rules", "name": "My Rules"}))
-	if err != nil {
-		t.Fatalf("POST /v1/rulesets: %v", err)
-	}
+	resp := authPost(t, token, srv.URL+"/v1/rulesets", mustJSON(t, map[string]string{"key": "my-rules", "name": "My Rules"}))
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusCreated {
 		t.Fatalf("create status: got %d, want 201", resp.StatusCode)
 	}
 
-	resp2, err := http.Get(srv.URL + "/v1/rulesets/my-rules")
-	if err != nil {
-		t.Fatalf("GET /v1/rulesets/my-rules: %v", err)
-	}
+	resp2 := authGet(t, token, srv.URL+"/v1/rulesets/my-rules")
 	defer resp2.Body.Close()
 
 	if resp2.StatusCode != http.StatusOK {
@@ -131,17 +176,12 @@ func TestCreateAndGetRuleset(t *testing.T) {
 }
 
 func TestCreateRulesetDuplicate(t *testing.T) {
-	srv := newTestServer(t)
+	srv, token := newTestServer(t)
 	defer srv.Close()
 
-	body := mustJSON(t, map[string]string{"key": "dup-rules", "name": "Dup"})
-	http.Post(srv.URL+"/v1/rulesets", "application/json", body) //nolint:errcheck
+	authPost(t, token, srv.URL+"/v1/rulesets", mustJSON(t, map[string]string{"key": "dup-rules", "name": "Dup"})).Body.Close() //nolint:errcheck
 
-	resp, err := http.Post(srv.URL+"/v1/rulesets", "application/json",
-		mustJSON(t, map[string]string{"key": "dup-rules", "name": "Dup"}))
-	if err != nil {
-		t.Fatalf("POST /v1/rulesets: %v", err)
-	}
+	resp := authPost(t, token, srv.URL+"/v1/rulesets", mustJSON(t, map[string]string{"key": "dup-rules", "name": "Dup"}))
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusConflict {
@@ -150,14 +190,10 @@ func TestCreateRulesetDuplicate(t *testing.T) {
 }
 
 func TestCreateRulesetInvalidKey(t *testing.T) {
-	srv := newTestServer(t)
+	srv, token := newTestServer(t)
 	defer srv.Close()
 
-	resp, err := http.Post(srv.URL+"/v1/rulesets", "application/json",
-		mustJSON(t, map[string]string{"key": "INVALID KEY!", "name": "Bad"}))
-	if err != nil {
-		t.Fatalf("POST /v1/rulesets: %v", err)
-	}
+	resp := authPost(t, token, srv.URL+"/v1/rulesets", mustJSON(t, map[string]string{"key": "INVALID KEY!", "name": "Bad"}))
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusBadRequest {
@@ -166,14 +202,10 @@ func TestCreateRulesetInvalidKey(t *testing.T) {
 }
 
 func TestCreateRulesetInvalidNamespace(t *testing.T) {
-	srv := newTestServer(t)
+	srv, token := newTestServer(t)
 	defer srv.Close()
 
-	resp, err := http.Post(srv.URL+"/v1/rulesets", "application/json",
-		mustJSON(t, map[string]string{"key": "rules", "name": "Bad", "namespace": "INVALID NS!"}))
-	if err != nil {
-		t.Fatalf("POST /v1/rulesets: %v", err)
-	}
+	resp := authPost(t, token, srv.URL+"/v1/rulesets", mustJSON(t, map[string]string{"key": "rules", "name": "Bad", "namespace": "INVALID NS!"}))
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusBadRequest {
@@ -182,13 +214,10 @@ func TestCreateRulesetInvalidNamespace(t *testing.T) {
 }
 
 func TestGetRulesetNotFound(t *testing.T) {
-	srv := newTestServer(t)
+	srv, token := newTestServer(t)
 	defer srv.Close()
 
-	resp, err := http.Get(srv.URL + "/v1/rulesets/nonexistent")
-	if err != nil {
-		t.Fatalf("GET /v1/rulesets/nonexistent: %v", err)
-	}
+	resp := authGet(t, token, srv.URL+"/v1/rulesets/nonexistent")
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusNotFound {
@@ -197,22 +226,14 @@ func TestGetRulesetNotFound(t *testing.T) {
 }
 
 func TestListRulesets(t *testing.T) {
-	srv := newTestServer(t)
+	srv, token := newTestServer(t)
 	defer srv.Close()
 
 	for _, key := range []string{"rules-b", "rules-a", "rules-c"} {
-		resp, err := http.Post(srv.URL+"/v1/rulesets", "application/json",
-			mustJSON(t, map[string]string{"key": key, "name": key}))
-		if err != nil {
-			t.Fatalf("POST /v1/rulesets %s: %v", key, err)
-		}
-		resp.Body.Close()
+		authPost(t, token, srv.URL+"/v1/rulesets", mustJSON(t, map[string]string{"key": key, "name": key})).Body.Close()
 	}
 
-	resp, err := http.Get(srv.URL + "/v1/rulesets")
-	if err != nil {
-		t.Fatalf("GET /v1/rulesets: %v", err)
-	}
+	resp := authGet(t, token, srv.URL+"/v1/rulesets")
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
@@ -224,29 +245,20 @@ func TestListRulesets(t *testing.T) {
 	if len(list) != 3 {
 		t.Fatalf("count: got %d, want 3", len(list))
 	}
-	// alphabetical order
 	if list[0].Key != "rules-a" || list[1].Key != "rules-b" || list[2].Key != "rules-c" {
 		t.Errorf("order: got %v", []string{list[0].Key, list[1].Key, list[2].Key})
 	}
 }
 
 func TestListRulesetsPagination(t *testing.T) {
-	srv := newTestServer(t)
+	srv, token := newTestServer(t)
 	defer srv.Close()
 
 	for _, key := range []string{"rules-a", "rules-b", "rules-c"} {
-		resp, err := http.Post(srv.URL+"/v1/rulesets", "application/json",
-			mustJSON(t, map[string]string{"key": key, "name": key}))
-		if err != nil {
-			t.Fatalf("POST /v1/rulesets %s: %v", key, err)
-		}
-		resp.Body.Close()
+		authPost(t, token, srv.URL+"/v1/rulesets", mustJSON(t, map[string]string{"key": key, "name": key})).Body.Close()
 	}
 
-	resp, err := http.Get(srv.URL + "/v1/rulesets?limit=2&offset=1")
-	if err != nil {
-		t.Fatalf("GET /v1/rulesets?limit=2&offset=1: %v", err)
-	}
+	resp := authGet(t, token, srv.URL+"/v1/rulesets?limit=2&offset=1")
 	defer resp.Body.Close()
 
 	var list []*domain.Ruleset
@@ -260,32 +272,21 @@ func TestListRulesetsPagination(t *testing.T) {
 }
 
 func TestDeleteRuleset(t *testing.T) {
-	srv := newTestServer(t)
+	srv, token := newTestServer(t)
 	defer srv.Close()
 
-	resp, err := http.Post(srv.URL+"/v1/rulesets", "application/json",
-		mustJSON(t, map[string]string{"key": "to-delete", "name": "Delete Me"}))
-	if err != nil {
-		t.Fatalf("POST /v1/rulesets: %v", err)
-	}
-	resp.Body.Close()
+	authPost(t, token, srv.URL+"/v1/rulesets", mustJSON(t, map[string]string{"key": "to-delete", "name": "Delete Me"})).Body.Close()
 
 	req, _ := http.NewRequest(http.MethodDelete, srv.URL+"/v1/rulesets/to-delete", nil)
-	resp2, err := http.DefaultClient.Do(req)
-	if err != nil {
-		t.Fatalf("DELETE /v1/rulesets/to-delete: %v", err)
-	}
+	resp2 := authDo(t, token, req)
 	resp2.Body.Close()
 
 	if resp2.StatusCode != http.StatusNoContent {
 		t.Errorf("delete status: got %d, want 204", resp2.StatusCode)
 	}
 
-	resp3, err := http.Get(srv.URL + "/v1/rulesets/to-delete")
-	if err != nil {
-		t.Fatalf("GET after delete: %v", err)
-	}
-	resp3.Body.Close()
+	resp3 := authGet(t, token, srv.URL+"/v1/rulesets/to-delete")
+	defer resp3.Body.Close()
 
 	if resp3.StatusCode != http.StatusNotFound {
 		t.Errorf("get after delete: got %d, want 404", resp3.StatusCode)
@@ -293,15 +294,12 @@ func TestDeleteRuleset(t *testing.T) {
 }
 
 func TestDeleteRulesetNotFound(t *testing.T) {
-	srv := newTestServer(t)
+	srv, token := newTestServer(t)
 	defer srv.Close()
 
 	req, _ := http.NewRequest(http.MethodDelete, srv.URL+"/v1/rulesets/nonexistent", nil)
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		t.Fatalf("DELETE /v1/rulesets/nonexistent: %v", err)
-	}
-	resp.Body.Close()
+	resp := authDo(t, token, req)
+	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusNotFound {
 		t.Errorf("status: got %d, want 404", resp.StatusCode)
@@ -310,48 +308,37 @@ func TestDeleteRulesetNotFound(t *testing.T) {
 
 // --- Draft ---
 
-func createRuleset(t *testing.T, srv *httptest.Server, key string) {
+func createRuleset(t *testing.T, srv *httptest.Server, token, key string) {
 	t.Helper()
-	resp, err := http.Post(srv.URL+"/v1/rulesets", "application/json",
-		mustJSON(t, map[string]string{"key": key, "name": key}))
-	if err != nil {
-		t.Fatalf("createRuleset %s: %v", key, err)
-	}
+	resp := authPost(t, token, srv.URL+"/v1/rulesets", mustJSON(t, map[string]string{"key": key, "name": key}))
 	resp.Body.Close()
 	if resp.StatusCode != http.StatusCreated {
 		t.Fatalf("createRuleset %s: status %d", key, resp.StatusCode)
 	}
 }
 
-func upsertDraft(t *testing.T, srv *httptest.Server, key string, dslBody any) *http.Response {
+func upsertDraft(t *testing.T, srv *httptest.Server, token, key string, dslBody any) *http.Response {
 	t.Helper()
 	req, _ := http.NewRequest(http.MethodPut,
 		srv.URL+"/v1/rulesets/"+key+"/draft",
 		mustJSON(t, map[string]any{"dsl": dslBody}))
 	req.Header.Set("Content-Type", "application/json")
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		t.Fatalf("upsertDraft %s: %v", key, err)
-	}
-	return resp
+	return authDo(t, token, req)
 }
 
 func TestUpsertAndGetDraft(t *testing.T) {
-	srv := newTestServer(t)
+	srv, token := newTestServer(t)
 	defer srv.Close()
-	createRuleset(t, srv, "draft-rules")
+	createRuleset(t, srv, token, "draft-rules")
 
-	resp := upsertDraft(t, srv, "draft-rules", validDSL)
+	resp := upsertDraft(t, srv, token, "draft-rules", validDSL)
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("upsert status: got %d, want 200", resp.StatusCode)
 	}
 
-	resp2, err := http.Get(srv.URL + "/v1/rulesets/draft-rules/draft")
-	if err != nil {
-		t.Fatalf("GET draft: %v", err)
-	}
+	resp2 := authGet(t, token, srv.URL+"/v1/rulesets/draft-rules/draft")
 	defer resp2.Body.Close()
 
 	if resp2.StatusCode != http.StatusOK {
@@ -360,11 +347,11 @@ func TestUpsertAndGetDraft(t *testing.T) {
 }
 
 func TestUpsertDraftInvalidDSL(t *testing.T) {
-	srv := newTestServer(t)
+	srv, token := newTestServer(t)
 	defer srv.Close()
-	createRuleset(t, srv, "bad-draft-rules")
+	createRuleset(t, srv, token, "bad-draft-rules")
 
-	resp := upsertDraft(t, srv, "bad-draft-rules", map[string]any{"dsl_version": "v99"})
+	resp := upsertDraft(t, srv, token, "bad-draft-rules", map[string]any{"dsl_version": "v99"})
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusBadRequest {
@@ -373,14 +360,11 @@ func TestUpsertDraftInvalidDSL(t *testing.T) {
 }
 
 func TestGetDraftNotFound(t *testing.T) {
-	srv := newTestServer(t)
+	srv, token := newTestServer(t)
 	defer srv.Close()
-	createRuleset(t, srv, "nodraft-rules")
+	createRuleset(t, srv, token, "nodraft-rules")
 
-	resp, err := http.Get(srv.URL + "/v1/rulesets/nodraft-rules/draft")
-	if err != nil {
-		t.Fatalf("GET draft: %v", err)
-	}
+	resp := authGet(t, token, srv.URL+"/v1/rulesets/nodraft-rules/draft")
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusNotFound {
@@ -389,29 +373,22 @@ func TestGetDraftNotFound(t *testing.T) {
 }
 
 func TestDeleteDraft(t *testing.T) {
-	srv := newTestServer(t)
+	srv, token := newTestServer(t)
 	defer srv.Close()
-	createRuleset(t, srv, "del-draft-rules")
+	createRuleset(t, srv, token, "del-draft-rules")
 
-	resp := upsertDraft(t, srv, "del-draft-rules", validDSL)
-	resp.Body.Close()
+	upsertDraft(t, srv, token, "del-draft-rules", validDSL).Body.Close()
 
 	req, _ := http.NewRequest(http.MethodDelete, srv.URL+"/v1/rulesets/del-draft-rules/draft", nil)
-	resp2, err := http.DefaultClient.Do(req)
-	if err != nil {
-		t.Fatalf("DELETE draft: %v", err)
-	}
+	resp2 := authDo(t, token, req)
 	resp2.Body.Close()
 
 	if resp2.StatusCode != http.StatusNoContent {
 		t.Errorf("delete status: got %d, want 204", resp2.StatusCode)
 	}
 
-	resp3, err := http.Get(srv.URL + "/v1/rulesets/del-draft-rules/draft")
-	if err != nil {
-		t.Fatalf("GET after delete: %v", err)
-	}
-	resp3.Body.Close()
+	resp3 := authGet(t, token, srv.URL+"/v1/rulesets/del-draft-rules/draft")
+	defer resp3.Body.Close()
 
 	if resp3.StatusCode != http.StatusNotFound {
 		t.Errorf("get after delete: got %d, want 404", resp3.StatusCode)
@@ -420,34 +397,29 @@ func TestDeleteDraft(t *testing.T) {
 
 // --- Publish ---
 
-func publish(t *testing.T, srv *httptest.Server, key string) *http.Response {
+func publish(t *testing.T, srv *httptest.Server, token, key string) *http.Response {
 	t.Helper()
 	req, _ := http.NewRequest(http.MethodPost, srv.URL+"/v1/rulesets/"+key+"/publish", nil)
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		t.Fatalf("publish %s: %v", key, err)
-	}
-	return resp
+	return authDo(t, token, req)
 }
 
 func TestPublishFlow(t *testing.T) {
-	srv := newTestServer(t)
+	srv, token := newTestServer(t)
 	defer srv.Close()
-	createRuleset(t, srv, "pub-rules")
+	createRuleset(t, srv, token, "pub-rules")
 
 	// Publish without draft → 404
-	resp := publish(t, srv, "pub-rules")
+	resp := publish(t, srv, token, "pub-rules")
 	resp.Body.Close()
 	if resp.StatusCode != http.StatusNotFound {
 		t.Errorf("publish without draft: got %d, want 404", resp.StatusCode)
 	}
 
 	// Upsert draft
-	r := upsertDraft(t, srv, "pub-rules", validDSL)
-	r.Body.Close()
+	upsertDraft(t, srv, token, "pub-rules", validDSL).Body.Close()
 
 	// Publish → 201
-	resp2 := publish(t, srv, "pub-rules")
+	resp2 := publish(t, srv, token, "pub-rules")
 	defer resp2.Body.Close()
 	if resp2.StatusCode != http.StatusCreated {
 		t.Fatalf("publish: got %d, want 201", resp2.StatusCode)
@@ -464,24 +436,17 @@ func TestPublishFlow(t *testing.T) {
 }
 
 func TestPublishNoChanges(t *testing.T) {
-	srv := newTestServer(t)
+	srv, token := newTestServer(t)
 	defer srv.Close()
-	createRuleset(t, srv, "noop-rules")
+	createRuleset(t, srv, token, "noop-rules")
 
-	r := upsertDraft(t, srv, "noop-rules", validDSL)
-	r.Body.Close()
-
-	r2 := publish(t, srv, "noop-rules")
-	r2.Body.Close()
-	if r2.StatusCode != http.StatusCreated {
-		t.Fatalf("first publish: got %d, want 201", r2.StatusCode)
-	}
+	upsertDraft(t, srv, token, "noop-rules", validDSL).Body.Close()
+	publish(t, srv, token, "noop-rules").Body.Close()
 
 	// Re-upsert same DSL and publish again → 409 NO_CHANGES
-	r3 := upsertDraft(t, srv, "noop-rules", validDSL)
-	r3.Body.Close()
+	upsertDraft(t, srv, token, "noop-rules", validDSL).Body.Close()
 
-	resp := publish(t, srv, "noop-rules")
+	resp := publish(t, srv, token, "noop-rules")
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusConflict {
 		t.Errorf("no-op publish: got %d, want 409", resp.StatusCode)
@@ -489,17 +454,13 @@ func TestPublishNoChanges(t *testing.T) {
 }
 
 func TestPublishIncrementsVersion(t *testing.T) {
-	srv := newTestServer(t)
+	srv, token := newTestServer(t)
 	defer srv.Close()
-	createRuleset(t, srv, "versioned-rules")
+	createRuleset(t, srv, token, "versioned-rules")
 
-	dsl1 := validDSL
-	r := upsertDraft(t, srv, "versioned-rules", dsl1)
-	r.Body.Close()
-	r2 := publish(t, srv, "versioned-rules")
-	r2.Body.Close()
+	upsertDraft(t, srv, token, "versioned-rules", validDSL).Body.Close()
+	publish(t, srv, token, "versioned-rules").Body.Close()
 
-	// Modified DSL for second publish
 	dsl2 := map[string]any{
 		"dsl_version": "v1",
 		"strategy":    "all_matches",
@@ -517,9 +478,8 @@ func TestPublishIncrementsVersion(t *testing.T) {
 			},
 		},
 	}
-	r3 := upsertDraft(t, srv, "versioned-rules", dsl2)
-	r3.Body.Close()
-	resp := publish(t, srv, "versioned-rules")
+	upsertDraft(t, srv, token, "versioned-rules", dsl2).Body.Close()
+	resp := publish(t, srv, token, "versioned-rules")
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusCreated {
@@ -535,16 +495,13 @@ func TestPublishIncrementsVersion(t *testing.T) {
 // --- Versions ---
 
 func TestGetVersion(t *testing.T) {
-	srv := newTestServer(t)
+	srv, token := newTestServer(t)
 	defer srv.Close()
-	createRuleset(t, srv, "ver-rules")
-	upsertDraft(t, srv, "ver-rules", validDSL).Body.Close()
-	publish(t, srv, "ver-rules").Body.Close()
+	createRuleset(t, srv, token, "ver-rules")
+	upsertDraft(t, srv, token, "ver-rules", validDSL).Body.Close()
+	publish(t, srv, token, "ver-rules").Body.Close()
 
-	resp, err := http.Get(srv.URL + "/v1/rulesets/ver-rules/versions/1")
-	if err != nil {
-		t.Fatalf("GET versions/1: %v", err)
-	}
+	resp := authGet(t, token, srv.URL+"/v1/rulesets/ver-rules/versions/1")
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
@@ -561,16 +518,13 @@ func TestGetVersion(t *testing.T) {
 }
 
 func TestGetLatestVersion(t *testing.T) {
-	srv := newTestServer(t)
+	srv, token := newTestServer(t)
 	defer srv.Close()
-	createRuleset(t, srv, "latest-rules")
-	upsertDraft(t, srv, "latest-rules", validDSL).Body.Close()
-	publish(t, srv, "latest-rules").Body.Close()
+	createRuleset(t, srv, token, "latest-rules")
+	upsertDraft(t, srv, token, "latest-rules", validDSL).Body.Close()
+	publish(t, srv, token, "latest-rules").Body.Close()
 
-	resp, err := http.Get(srv.URL + "/v1/rulesets/latest-rules/versions/latest")
-	if err != nil {
-		t.Fatalf("GET versions/latest: %v", err)
-	}
+	resp := authGet(t, token, srv.URL+"/v1/rulesets/latest-rules/versions/latest")
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
@@ -584,9 +538,9 @@ func TestGetLatestVersion(t *testing.T) {
 }
 
 func TestListVersions(t *testing.T) {
-	srv := newTestServer(t)
+	srv, token := newTestServer(t)
 	defer srv.Close()
-	createRuleset(t, srv, "list-ver-rules")
+	createRuleset(t, srv, token, "list-ver-rules")
 
 	dsl2 := map[string]any{
 		"dsl_version": "v1",
@@ -601,15 +555,12 @@ func TestListVersions(t *testing.T) {
 		},
 	}
 
-	upsertDraft(t, srv, "list-ver-rules", validDSL).Body.Close()
-	publish(t, srv, "list-ver-rules").Body.Close()
-	upsertDraft(t, srv, "list-ver-rules", dsl2).Body.Close()
-	publish(t, srv, "list-ver-rules").Body.Close()
+	upsertDraft(t, srv, token, "list-ver-rules", validDSL).Body.Close()
+	publish(t, srv, token, "list-ver-rules").Body.Close()
+	upsertDraft(t, srv, token, "list-ver-rules", dsl2).Body.Close()
+	publish(t, srv, token, "list-ver-rules").Body.Close()
 
-	resp, err := http.Get(srv.URL + "/v1/rulesets/list-ver-rules/versions")
-	if err != nil {
-		t.Fatalf("GET versions: %v", err)
-	}
+	resp := authGet(t, token, srv.URL+"/v1/rulesets/list-ver-rules/versions")
 	defer resp.Body.Close()
 
 	var versions []*domain.Version
@@ -625,16 +576,13 @@ func TestListVersions(t *testing.T) {
 // --- Bundle ---
 
 func TestGetVersionBundle(t *testing.T) {
-	srv := newTestServer(t)
+	srv, token := newTestServer(t)
 	defer srv.Close()
-	createRuleset(t, srv, "bundle-rules")
-	upsertDraft(t, srv, "bundle-rules", validDSL).Body.Close()
-	publish(t, srv, "bundle-rules").Body.Close()
+	createRuleset(t, srv, token, "bundle-rules")
+	upsertDraft(t, srv, token, "bundle-rules", validDSL).Body.Close()
+	publish(t, srv, token, "bundle-rules").Body.Close()
 
-	resp, err := http.Get(srv.URL + "/v1/rulesets/bundle-rules/versions/1/bundle")
-	if err != nil {
-		t.Fatalf("GET bundle: %v", err)
-	}
+	resp := authGet(t, token, srv.URL+"/v1/rulesets/bundle-rules/versions/1/bundle")
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
@@ -646,16 +594,13 @@ func TestGetVersionBundle(t *testing.T) {
 }
 
 func TestGetLatestBundle(t *testing.T) {
-	srv := newTestServer(t)
+	srv, token := newTestServer(t)
 	defer srv.Close()
-	createRuleset(t, srv, "latest-bundle-rules")
-	upsertDraft(t, srv, "latest-bundle-rules", validDSL).Body.Close()
-	publish(t, srv, "latest-bundle-rules").Body.Close()
+	createRuleset(t, srv, token, "latest-bundle-rules")
+	upsertDraft(t, srv, token, "latest-bundle-rules", validDSL).Body.Close()
+	publish(t, srv, token, "latest-bundle-rules").Body.Close()
 
-	resp, err := http.Get(srv.URL + "/v1/rulesets/latest-bundle-rules/versions/latest/bundle")
-	if err != nil {
-		t.Fatalf("GET latest bundle: %v", err)
-	}
+	resp := authGet(t, token, srv.URL+"/v1/rulesets/latest-bundle-rules/versions/latest/bundle")
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
@@ -668,14 +613,8 @@ func TestGetLatestBundle(t *testing.T) {
 
 // --- Auth ---
 
-func TestAuthRequiredWhenKeySet(t *testing.T) {
-	dir := t.TempDir()
-	db, _ := sqlitestore.New(dir)
-	blobs, _ := fsblobstore.New(dir + "/blobs")
-	t.Cleanup(func() { db.Close(); blobs.Close() })
-
-	svc := service.NewRulesetService(db, blobs)
-	srv := httptest.NewServer(httpadapter.NewRouter(handler.NewRulesetHandler(svc), nil, nil, db, legacyCfg("secret-key"), time.Now()))
+func TestAuthRequired(t *testing.T) {
+	srv, token := newTestServer(t)
 	defer srv.Close()
 
 	// No token → 401
@@ -688,39 +627,28 @@ func TestAuthRequiredWhenKeySet(t *testing.T) {
 		t.Errorf("no token: got %d, want 401", resp.StatusCode)
 	}
 
-	// Wrong token → 401
+	// Invalid token → 401
 	req, _ := http.NewRequest(http.MethodGet, srv.URL+"/v1/rulesets", nil)
-	req.Header.Set("Authorization", "Bearer wrong-key")
+	req.Header.Set("Authorization", "Bearer not-a-valid-jwt")
 	resp2, err := http.DefaultClient.Do(req)
 	if err != nil {
-		t.Fatalf("GET with wrong token: %v", err)
+		t.Fatalf("GET with bad token: %v", err)
 	}
 	resp2.Body.Close()
 	if resp2.StatusCode != http.StatusUnauthorized {
-		t.Errorf("wrong token: got %d, want 401", resp2.StatusCode)
+		t.Errorf("bad token: got %d, want 401", resp2.StatusCode)
 	}
 
-	// Correct token → 200
-	req2, _ := http.NewRequest(http.MethodGet, srv.URL+"/v1/rulesets", nil)
-	req2.Header.Set("Authorization", "Bearer secret-key")
-	resp3, err := http.DefaultClient.Do(req2)
-	if err != nil {
-		t.Fatalf("GET with correct token: %v", err)
-	}
-	resp3.Body.Close()
+	// Valid admin JWT → 200
+	resp3 := authGet(t, token, srv.URL+"/v1/rulesets")
+	defer resp3.Body.Close()
 	if resp3.StatusCode != http.StatusOK {
-		t.Errorf("correct token: got %d, want 200", resp3.StatusCode)
+		t.Errorf("valid token: got %d, want 200", resp3.StatusCode)
 	}
 }
 
 func TestHealthzSkipsAuth(t *testing.T) {
-	dir := t.TempDir()
-	db, _ := sqlitestore.New(dir)
-	blobs, _ := fsblobstore.New(dir + "/blobs")
-	t.Cleanup(func() { db.Close(); blobs.Close() })
-
-	svc := service.NewRulesetService(db, blobs)
-	srv := httptest.NewServer(httpadapter.NewRouter(handler.NewRulesetHandler(svc), nil, nil, db, legacyCfg("secret-key"), time.Now()))
+	srv, _ := newTestServer(t)
 	defer srv.Close()
 
 	resp, err := http.Get(srv.URL + "/healthz")
@@ -729,35 +657,27 @@ func TestHealthzSkipsAuth(t *testing.T) {
 	}
 	resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		t.Errorf("healthz with auth enabled: got %d, want 200", resp.StatusCode)
+		t.Errorf("healthz without token: got %d, want 200", resp.StatusCode)
 	}
 }
 
 // --- Namespace isolation ---
 
 func TestNamespaceIsolation(t *testing.T) {
-	srv := newTestServer(t)
+	srv, token := newTestServer(t)
 	defer srv.Close()
 
-	// Create same key in two namespaces
 	for _, ns := range []string{"team-a", "team-b"} {
-		resp, err := http.Post(srv.URL+"/v1/rulesets", "application/json",
+		resp := authPost(t, token, srv.URL+"/v1/rulesets",
 			mustJSON(t, map[string]string{"key": "shared", "name": "Shared", "namespace": ns}))
-		if err != nil {
-			t.Fatalf("POST ns=%s: %v", ns, err)
-		}
 		resp.Body.Close()
 		if resp.StatusCode != http.StatusCreated {
 			t.Fatalf("POST ns=%s: status %d", ns, resp.StatusCode)
 		}
 	}
 
-	// Each namespace sees only its own ruleset
 	for _, ns := range []string{"team-a", "team-b"} {
-		resp, err := http.Get(srv.URL + "/v1/rulesets?namespace=" + ns)
-		if err != nil {
-			t.Fatalf("GET ns=%s: %v", ns, err)
-		}
+		resp := authGet(t, token, srv.URL+"/v1/rulesets?namespace="+ns)
 		defer resp.Body.Close()
 		var list []*domain.Ruleset
 		decode(t, resp, &list)
@@ -768,13 +688,10 @@ func TestNamespaceIsolation(t *testing.T) {
 }
 
 func TestInvalidNamespaceQueryParam(t *testing.T) {
-	srv := newTestServer(t)
+	srv, token := newTestServer(t)
 	defer srv.Close()
 
-	resp, err := http.Get(srv.URL + "/v1/rulesets?namespace=INVALID!")
-	if err != nil {
-		t.Fatalf("GET: %v", err)
-	}
+	resp := authGet(t, token, srv.URL+"/v1/rulesets?namespace=INVALID!")
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusBadRequest {

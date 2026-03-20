@@ -8,7 +8,6 @@ import (
 )
 
 // RulesetUseCase is the inbound port for all ruleset operations.
-// The HTTP transport depends on this interface, never on the concrete struct.
 type RulesetUseCase interface {
 	ListRulesets(ctx context.Context, namespace string, limit, offset int) ([]*domain.Ruleset, error)
 	CreateRuleset(ctx context.Context, namespace, key, name, description string) (*domain.Ruleset, error)
@@ -29,6 +28,7 @@ type RulesetUseCase interface {
 
 // AuthUseCase is the inbound port for authentication operations.
 type AuthUseCase interface {
+	AdminLogin(ctx context.Context, password string) (*TokenPair, error)
 	Login(ctx context.Context, email string) error
 	Verify(ctx context.Context, email, code string) (*TokenPair, error)
 	Refresh(ctx context.Context, rawRefreshToken string) (*TokenPair, error)
@@ -44,7 +44,7 @@ type AdminUseCase interface {
 	UpsertUserRole(ctx context.Context, userID, namespace string, roleMask domain.Role) (*domain.UserRole, error)
 	DeleteUserRole(ctx context.Context, userID, namespace string) error
 
-	CreateAPIToken(ctx context.Context, userID, name, namespace string, role domain.Role, expiresInDays int) (*CreatedToken, error)
-	ListAPITokens(ctx context.Context, userID string) ([]*domain.APIToken, error)
-	RevokeAPIToken(ctx context.Context, tokenID string) error
+	CreateAPIKey(ctx context.Context, name, namespace string, role domain.Role, expiresInDays int) (*CreatedKey, error)
+	ListAPIKeys(ctx context.Context, limit, offset int) ([]*domain.APIKey, error)
+	RevokeAPIKey(ctx context.Context, keyID string) error
 }

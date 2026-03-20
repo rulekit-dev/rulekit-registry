@@ -55,18 +55,25 @@ CREATE TABLE IF NOT EXISTS otp_codes (
     used_at    TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_otp_codes_user_id ON otp_codes(user_id);
-CREATE TABLE IF NOT EXISTS api_tokens (
+CREATE TABLE IF NOT EXISTS refresh_tokens (
     id         TEXT NOT NULL PRIMARY KEY,
     user_id    TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    name       TEXT NOT NULL,
     token_hash TEXT NOT NULL UNIQUE,
+    expires_at TEXT NOT NULL,
+    revoked_at TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_refresh_tokens_token_hash ON refresh_tokens(token_hash);
+CREATE TABLE IF NOT EXISTS api_keys (
+    id         TEXT NOT NULL PRIMARY KEY,
+    name       TEXT NOT NULL,
+    key_hash   TEXT NOT NULL UNIQUE,
     namespace  TEXT NOT NULL,
     role       INTEGER NOT NULL,
     created_at TEXT NOT NULL,
     expires_at TEXT,
     revoked_at TEXT
 );
-CREATE INDEX IF NOT EXISTS idx_api_tokens_token_hash ON api_tokens(token_hash);
+CREATE INDEX IF NOT EXISTS idx_api_keys_key_hash ON api_keys(key_hash);
 CREATE TABLE IF NOT EXISTS user_roles (
     user_id   TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     namespace TEXT NOT NULL,
@@ -452,18 +459,64 @@ func (s *SQLiteStore) DeleteExpiredOTPs(ctx context.Context) error {
 	return err
 }
 
-// --- API token ---
+// --- Refresh token ---
 
-func (s *SQLiteStore) CreateAPIToken(ctx context.Context, t *domain.APIToken) error {
+func (s *SQLiteStore) CreateRefreshToken(ctx context.Context, t *domain.RefreshToken) error {
+	_, err := s.db.ExecContext(ctx,
+		`INSERT INTO refresh_tokens (id, user_id, token_hash, expires_at) VALUES (?, ?, ?, ?)`,
+		t.ID, t.UserID, t.TokenHash,
+		t.ExpiresAt.UTC().Format(time.RFC3339Nano),
+	)
+	return err
+}
+
+func (s *SQLiteStore) GetRefreshTokenByHash(ctx context.Context, tokenHash string) (*domain.RefreshToken, error) {
+	t := &domain.RefreshToken{}
+	var exp string
+	var rev sql.NullString
+	err := s.db.QueryRowContext(ctx,
+		`SELECT id, user_id, token_hash, expires_at, revoked_at FROM refresh_tokens WHERE token_hash = ?`,
+		tokenHash).Scan(&t.ID, &t.UserID, &t.TokenHash, &exp, &rev)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, port.ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	t.ExpiresAt, _ = time.Parse(time.RFC3339Nano, exp)
+	if rev.Valid {
+		tt, _ := time.Parse(time.RFC3339Nano, rev.String)
+		t.RevokedAt = &tt
+	}
+	return t, nil
+}
+
+func (s *SQLiteStore) RevokeRefreshToken(ctx context.Context, tokenID string) error {
+	res, err := s.db.ExecContext(ctx,
+		`UPDATE refresh_tokens SET revoked_at = ? WHERE id = ? AND revoked_at IS NULL`,
+		time.Now().UTC().Format(time.RFC3339Nano), tokenID)
+	if err != nil {
+		return err
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return port.ErrNotFound
+	}
+	return nil
+}
+
+// --- API key ---
+
+func (s *SQLiteStore) CreateAPIKey(ctx context.Context, k *domain.APIKey) error {
 	var exp interface{}
-	if t.ExpiresAt != nil {
-		exp = t.ExpiresAt.UTC().Format(time.RFC3339Nano)
+	if k.ExpiresAt != nil {
+		exp = k.ExpiresAt.UTC().Format(time.RFC3339Nano)
 	}
 	_, err := s.db.ExecContext(ctx,
-		`INSERT INTO api_tokens (id, user_id, name, token_hash, namespace, role, created_at, expires_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-		t.ID, t.UserID, t.Name, t.TokenHash, t.Namespace, int(t.Role),
-		t.CreatedAt.UTC().Format(time.RFC3339Nano), exp,
+		`INSERT INTO api_keys (id, name, key_hash, namespace, role, created_at, expires_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		k.ID, k.Name, k.KeyHash, k.Namespace, int(k.Role),
+		k.CreatedAt.UTC().Format(time.RFC3339Nano), exp,
 	)
 	if err != nil {
 		if isUniqueConstraint(err) {
@@ -474,68 +527,68 @@ func (s *SQLiteStore) CreateAPIToken(ctx context.Context, t *domain.APIToken) er
 	return nil
 }
 
-func (s *SQLiteStore) GetAPITokenByHash(ctx context.Context, tokenHash string) (*domain.APIToken, error) {
-	t := &domain.APIToken{}
+func (s *SQLiteStore) GetAPIKeyByHash(ctx context.Context, keyHash string) (*domain.APIKey, error) {
+	k := &domain.APIKey{}
 	var ca, exp, rev sql.NullString
 	var role int
 	err := s.db.QueryRowContext(ctx,
-		`SELECT id, user_id, name, token_hash, namespace, role, created_at, expires_at, revoked_at
-         FROM api_tokens WHERE token_hash = ?`, tokenHash).
-		Scan(&t.ID, &t.UserID, &t.Name, &t.TokenHash, &t.Namespace, &role, &ca, &exp, &rev)
+		`SELECT id, name, key_hash, namespace, role, created_at, expires_at, revoked_at
+         FROM api_keys WHERE key_hash = ?`, keyHash).
+		Scan(&k.ID, &k.Name, &k.KeyHash, &k.Namespace, &role, &ca, &exp, &rev)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, port.ErrNotFound
 	}
 	if err != nil {
 		return nil, err
 	}
-	t.Role = domain.Role(role)
-	t.CreatedAt, _ = time.Parse(time.RFC3339Nano, ca.String)
+	k.Role = domain.Role(role)
+	k.CreatedAt, _ = time.Parse(time.RFC3339Nano, ca.String)
 	if exp.Valid {
 		tt, _ := time.Parse(time.RFC3339Nano, exp.String)
-		t.ExpiresAt = &tt
+		k.ExpiresAt = &tt
 	}
 	if rev.Valid {
 		tt, _ := time.Parse(time.RFC3339Nano, rev.String)
-		t.RevokedAt = &tt
+		k.RevokedAt = &tt
 	}
-	return t, nil
+	return k, nil
 }
 
-func (s *SQLiteStore) ListAPITokens(ctx context.Context, userID string) ([]*domain.APIToken, error) {
+func (s *SQLiteStore) ListAPIKeys(ctx context.Context, limit, offset int) ([]*domain.APIKey, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT id, user_id, name, token_hash, namespace, role, created_at, expires_at, revoked_at
-         FROM api_tokens WHERE user_id = ? ORDER BY created_at DESC`, userID)
+		`SELECT id, name, key_hash, namespace, role, created_at, expires_at, revoked_at
+         FROM api_keys ORDER BY created_at DESC LIMIT ? OFFSET ?`, limit, offset)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var out []*domain.APIToken
+	var out []*domain.APIKey
 	for rows.Next() {
-		t := &domain.APIToken{}
+		k := &domain.APIKey{}
 		var ca, exp, rev sql.NullString
 		var role int
-		if err := rows.Scan(&t.ID, &t.UserID, &t.Name, &t.TokenHash, &t.Namespace, &role, &ca, &exp, &rev); err != nil {
+		if err := rows.Scan(&k.ID, &k.Name, &k.KeyHash, &k.Namespace, &role, &ca, &exp, &rev); err != nil {
 			return nil, err
 		}
-		t.Role = domain.Role(role)
-		t.CreatedAt, _ = time.Parse(time.RFC3339Nano, ca.String)
+		k.Role = domain.Role(role)
+		k.CreatedAt, _ = time.Parse(time.RFC3339Nano, ca.String)
 		if exp.Valid {
 			tt, _ := time.Parse(time.RFC3339Nano, exp.String)
-			t.ExpiresAt = &tt
+			k.ExpiresAt = &tt
 		}
 		if rev.Valid {
 			tt, _ := time.Parse(time.RFC3339Nano, rev.String)
-			t.RevokedAt = &tt
+			k.RevokedAt = &tt
 		}
-		out = append(out, t)
+		out = append(out, k)
 	}
 	return out, rows.Err()
 }
 
-func (s *SQLiteStore) RevokeAPIToken(ctx context.Context, tokenID string) error {
+func (s *SQLiteStore) RevokeAPIKey(ctx context.Context, keyID string) error {
 	res, err := s.db.ExecContext(ctx,
-		`UPDATE api_tokens SET revoked_at = ? WHERE id = ? AND revoked_at IS NULL`,
-		time.Now().UTC().Format(time.RFC3339Nano), tokenID)
+		`UPDATE api_keys SET revoked_at = ? WHERE id = ? AND revoked_at IS NULL`,
+		time.Now().UTC().Format(time.RFC3339Nano), keyID)
 	if err != nil {
 		return err
 	}

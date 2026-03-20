@@ -8,29 +8,15 @@ import (
 	"strconv"
 )
 
-// AuthMode controls authentication behaviour.
-//   - "none" (default) — legacy single-API-key mode; RULEKIT_API_KEY still applies
-//   - "jwt"  — full email+OTP login with JWT sessions and RBAC
-type AuthMode string
-
-const (
-	AuthModeNone AuthMode = "none"
-	AuthModeJWT  AuthMode = "jwt"
-)
-
 type Config struct {
 	Addr        string // RULEKIT_ADDR
 	DataDir     string // RULEKIT_DATA_DIR  (SQLite file directory)
 	Store       string // RULEKIT_STORE     (sqlite | postgres)
 	DatabaseURL string // RULEKIT_DATABASE_URL
 
-	// Auth — legacy single-key mode (AuthMode=none)
-	APIKey string // RULEKIT_API_KEY
-
-	// Auth — JWT mode (AuthMode=jwt)
-	AuthMode   AuthMode // RULEKIT_AUTH: "none" (default) | "jwt"
-	JWTSecret  string   // RULEKIT_JWT_SECRET: required when auth=jwt
-	AdminEmail string   // RULEKIT_ADMIN_EMAIL: bootstrapped superadmin email
+	// Auth
+	JWTSecret     string // RULEKIT_JWT_SECRET: required
+	AdminPassword string // RULEKIT_ADMIN_PASSWORD: required
 
 	// SMTP — optional; if unset OTP codes are printed to stdout
 	SMTPHost     string // RULEKIT_SMTP_HOST
@@ -69,11 +55,9 @@ func Load() (*Config, error) {
 	flag.StringVar(&cfg.DataDir, "data-dir", env("RULEKIT_DATA_DIR", "./data"), "data directory for SQLite (env: RULEKIT_DATA_DIR)")
 	flag.StringVar(&cfg.Store, "store", env("RULEKIT_STORE", "sqlite"), "storage backend: sqlite or postgres (env: RULEKIT_STORE)")
 	flag.StringVar(&cfg.DatabaseURL, "database-url", env("RULEKIT_DATABASE_URL", ""), "PostgreSQL DSN (env: RULEKIT_DATABASE_URL)")
-	flag.StringVar(&cfg.APIKey, "api-key", env("RULEKIT_API_KEY", ""), "API key for bearer token auth (env: RULEKIT_API_KEY)")
 
-	authMode := flag.String("auth", env("RULEKIT_AUTH", "none"), "auth mode: none or jwt (env: RULEKIT_AUTH)")
 	flag.StringVar(&cfg.JWTSecret, "jwt-secret", env("RULEKIT_JWT_SECRET", ""), "JWT signing secret (env: RULEKIT_JWT_SECRET)")
-	flag.StringVar(&cfg.AdminEmail, "admin-email", env("RULEKIT_ADMIN_EMAIL", ""), "bootstrap admin email (env: RULEKIT_ADMIN_EMAIL)")
+	flag.StringVar(&cfg.AdminPassword, "admin-password", env("RULEKIT_ADMIN_PASSWORD", ""), "admin login password (env: RULEKIT_ADMIN_PASSWORD)")
 
 	flag.StringVar(&cfg.SMTPHost, "smtp-host", env("RULEKIT_SMTP_HOST", ""), "SMTP host (env: RULEKIT_SMTP_HOST)")
 	smtpPort := flag.Int("smtp-port", envInt("RULEKIT_SMTP_PORT", 587), "SMTP port (env: RULEKIT_SMTP_PORT)")
@@ -100,7 +84,6 @@ func Load() (*Config, error) {
 
 	flag.Parse()
 
-	cfg.AuthMode = AuthMode(*authMode)
 	cfg.SMTPPort = *smtpPort
 	cfg.SMTPUseTLS = *smtpTLS
 	cfg.RateLimit = *rateLimit
@@ -118,12 +101,11 @@ func Load() (*Config, error) {
 	if cfg.Store == "postgres" && cfg.DatabaseURL == "" {
 		return nil, fmt.Errorf("config: RULEKIT_DATABASE_URL is required when store=postgres")
 	}
-
-	if cfg.AuthMode != AuthModeNone && cfg.AuthMode != AuthModeJWT {
-		return nil, fmt.Errorf("config: unknown auth mode %q (must be none or jwt)", cfg.AuthMode)
+	if cfg.JWTSecret == "" {
+		return nil, fmt.Errorf("config: RULEKIT_JWT_SECRET is required")
 	}
-	if cfg.AuthMode == AuthModeJWT && cfg.JWTSecret == "" {
-		return nil, fmt.Errorf("config: RULEKIT_JWT_SECRET is required when auth=jwt")
+	if cfg.AdminPassword == "" {
+		return nil, fmt.Errorf("config: RULEKIT_ADMIN_PASSWORD is required")
 	}
 
 	if cfg.BlobStore != "fs" && cfg.BlobStore != "s3" {
