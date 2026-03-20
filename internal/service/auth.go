@@ -13,10 +13,9 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/rulekit-dev/rulekit-registry/internal/datastore"
+	"github.com/rulekit-dev/rulekit-registry/internal/domain"
 	"github.com/rulekit-dev/rulekit-registry/internal/jwtutil"
-	"github.com/rulekit-dev/rulekit-registry/internal/mailer"
-	"github.com/rulekit-dev/rulekit-registry/internal/model"
+	"github.com/rulekit-dev/rulekit-registry/internal/port"
 )
 
 const (
@@ -26,12 +25,12 @@ const (
 )
 
 type AuthService struct {
-	db        datastore.Datastore
-	mailer    mailer.Mailer
+	db        port.Datastore
+	mailer    port.Mailer
 	jwtSecret []byte
 }
 
-func NewAuthService(db datastore.Datastore, m mailer.Mailer, jwtSecret []byte) *AuthService {
+func NewAuthService(db port.Datastore, m port.Mailer, jwtSecret []byte) *AuthService {
 	return &AuthService{db: db, mailer: m, jwtSecret: jwtSecret}
 }
 
@@ -41,8 +40,8 @@ func (s *AuthService) Login(ctx context.Context, email string) error {
 	email = strings.ToLower(strings.TrimSpace(email))
 
 	user, err := s.db.GetUserByEmail(ctx, email)
-	if errors.Is(err, datastore.ErrNotFound) {
-		user = &model.User{
+	if errors.Is(err, port.ErrNotFound) {
+		user = &domain.User{
 			ID:        uuid.NewString(),
 			Email:     email,
 			CreatedAt: time.Now().UTC(),
@@ -60,7 +59,7 @@ func (s *AuthService) Login(ctx context.Context, email string) error {
 		return fmt.Errorf("generate OTP: %w", err)
 	}
 
-	otp := &model.OTPCode{
+	otp := &domain.OTPCode{
 		ID:        uuid.NewString(),
 		UserID:    user.ID,
 		CodeHash:  HashString(code),
@@ -85,7 +84,7 @@ func (s *AuthService) Verify(ctx context.Context, email, code string) (*TokenPai
 	email = strings.ToLower(strings.TrimSpace(email))
 
 	user, err := s.db.GetUserByEmail(ctx, email)
-	if errors.Is(err, datastore.ErrNotFound) {
+	if errors.Is(err, port.ErrNotFound) {
 		return nil, ErrInvalidCode
 	}
 	if err != nil {
@@ -93,7 +92,7 @@ func (s *AuthService) Verify(ctx context.Context, email, code string) (*TokenPai
 	}
 
 	otp, err := s.db.GetUnusedOTPCode(ctx, user.ID)
-	if errors.Is(err, datastore.ErrNotFound) {
+	if errors.Is(err, port.ErrNotFound) {
 		return nil, ErrInvalidCode
 	}
 	if err != nil {
@@ -127,7 +126,7 @@ func (s *AuthService) Verify(ctx context.Context, email, code string) (*TokenPai
 	}
 
 	exp := time.Now().Add(refreshTokenTTL).UTC()
-	rt := &model.APIToken{
+	rt := &domain.APIToken{
 		ID:        uuid.NewString(),
 		UserID:    user.ID,
 		Name:      "refresh",
@@ -148,7 +147,7 @@ func (s *AuthService) Verify(ctx context.Context, email, code string) (*TokenPai
 func (s *AuthService) Refresh(ctx context.Context, rawRefreshToken string) (*TokenPair, error) {
 	tokenHash := HashString(rawRefreshToken)
 	rt, err := s.db.GetAPITokenByHash(ctx, tokenHash)
-	if errors.Is(err, datastore.ErrNotFound) {
+	if errors.Is(err, port.ErrNotFound) {
 		return nil, ErrInvalidToken
 	}
 	if err != nil {
@@ -187,7 +186,7 @@ func (s *AuthService) Refresh(ctx context.Context, rawRefreshToken string) (*Tok
 	}
 
 	exp := time.Now().Add(refreshTokenTTL).UTC()
-	newRT := &model.APIToken{
+	newRT := &domain.APIToken{
 		ID:        uuid.NewString(),
 		UserID:    user.ID,
 		Name:      "refresh",
@@ -209,13 +208,13 @@ func (s *AuthService) Refresh(ctx context.Context, rawRefreshToken string) (*Tok
 func (s *AuthService) Logout(ctx context.Context, rawRefreshToken string) error {
 	tokenHash := HashString(rawRefreshToken)
 	rt, err := s.db.GetAPITokenByHash(ctx, tokenHash)
-	if errors.Is(err, datastore.ErrNotFound) {
+	if errors.Is(err, port.ErrNotFound) {
 		return nil
 	}
 	if err != nil {
 		return fmt.Errorf("look up token: %w", err)
 	}
-	if err := s.db.RevokeAPIToken(ctx, rt.ID); err != nil && !errors.Is(err, datastore.ErrNotFound) {
+	if err := s.db.RevokeAPIToken(ctx, rt.ID); err != nil && !errors.Is(err, port.ErrNotFound) {
 		return fmt.Errorf("revoke token: %w", err)
 	}
 	return nil

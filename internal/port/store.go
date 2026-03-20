@@ -1,0 +1,63 @@
+package port
+
+import (
+	"context"
+	"errors"
+
+	"github.com/rulekit-dev/rulekit-registry/internal/domain"
+)
+
+var (
+	ErrNotFound         = errors.New("not found")
+	ErrAlreadyExists    = errors.New("already exists")
+	ErrVersionImmutable = errors.New("version already published and is immutable")
+)
+
+type Datastore interface {
+	// Ruleset operations
+	ListRulesets(ctx context.Context, namespace string, limit, offset int) ([]*domain.Ruleset, error)
+	CreateRuleset(ctx context.Context, r *domain.Ruleset) error
+	GetRuleset(ctx context.Context, namespace, key string) (*domain.Ruleset, error)
+	DeleteRuleset(ctx context.Context, namespace, key string) error
+
+	// Draft operations
+	GetDraft(ctx context.Context, namespace, key string) (*domain.Draft, error)
+	UpsertDraft(ctx context.Context, d *domain.Draft) error
+	DeleteDraft(ctx context.Context, namespace, key string) error
+
+	// Version operations
+	ListVersions(ctx context.Context, namespace, key string, limit, offset int) ([]*domain.Version, error)
+	GetVersion(ctx context.Context, namespace, key string, version int) (*domain.Version, error)
+	GetLatestVersion(ctx context.Context, namespace, key string) (*domain.Version, error)
+	CreateVersion(ctx context.Context, v *domain.Version) error
+	NextVersionNumber(ctx context.Context, namespace, key string) (int, error)
+
+	// User operations
+	CreateUser(ctx context.Context, u *domain.User) error
+	GetUserByEmail(ctx context.Context, email string) (*domain.User, error)
+	GetUserByID(ctx context.Context, id string) (*domain.User, error)
+	UpdateUserLastLogin(ctx context.Context, userID string) error
+	ListUsers(ctx context.Context, limit, offset int) ([]*domain.User, error)
+	DeleteUser(ctx context.Context, userID string) error
+
+	// OTP operations
+	CreateOTPCode(ctx context.Context, otp *domain.OTPCode) error
+	GetUnusedOTPCode(ctx context.Context, userID string) (*domain.OTPCode, error)
+	MarkOTPUsed(ctx context.Context, otpID string) error
+	DeleteExpiredOTPs(ctx context.Context) error
+
+	// API token operations
+	CreateAPIToken(ctx context.Context, t *domain.APIToken) error
+	GetAPITokenByHash(ctx context.Context, tokenHash string) (*domain.APIToken, error)
+	ListAPITokens(ctx context.Context, userID string) ([]*domain.APIToken, error)
+	RevokeAPIToken(ctx context.Context, tokenID string) error
+
+	// User role operations
+	UpsertUserRole(ctx context.Context, ur *domain.UserRole) error
+	GetUserRole(ctx context.Context, userID, namespace string) (*domain.UserRole, error)
+	ListUserRoles(ctx context.Context, userID string) ([]*domain.UserRole, error)
+	DeleteUserRole(ctx context.Context, userID, namespace string) error
+
+	Ping(ctx context.Context) error
+	Close() error
+}

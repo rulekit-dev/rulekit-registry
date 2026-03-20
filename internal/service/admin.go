@@ -9,49 +9,49 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/rulekit-dev/rulekit-registry/internal/datastore"
-	"github.com/rulekit-dev/rulekit-registry/internal/model"
+	"github.com/rulekit-dev/rulekit-registry/internal/domain"
+	"github.com/rulekit-dev/rulekit-registry/internal/port"
 )
 
 type AdminService struct {
-	db datastore.Datastore
+	db port.Datastore
 }
 
-func NewAdminService(db datastore.Datastore) *AdminService {
+func NewAdminService(db port.Datastore) *AdminService {
 	return &AdminService{db: db}
 }
 
-func (s *AdminService) ListUsers(ctx context.Context, limit, offset int) ([]*model.User, error) {
+func (s *AdminService) ListUsers(ctx context.Context, limit, offset int) ([]*domain.User, error) {
 	users, err := s.db.ListUsers(ctx, limit, offset)
 	if err != nil {
 		return nil, err
 	}
 	if users == nil {
-		users = []*model.User{}
+		users = []*domain.User{}
 	}
 	return users, nil
 }
 
 func (s *AdminService) DeleteUser(ctx context.Context, userID string) error {
-	return s.db.DeleteUser(ctx, userID)
+	return mapErr(s.db.DeleteUser(ctx, userID))
 }
 
-func (s *AdminService) ListUserRoles(ctx context.Context, userID string) ([]*model.UserRole, error) {
+func (s *AdminService) ListUserRoles(ctx context.Context, userID string) ([]*domain.UserRole, error) {
 	roles, err := s.db.ListUserRoles(ctx, userID)
 	if err != nil {
 		return nil, err
 	}
 	if roles == nil {
-		roles = []*model.UserRole{}
+		roles = []*domain.UserRole{}
 	}
 	return roles, nil
 }
 
-func (s *AdminService) UpsertUserRole(ctx context.Context, userID, namespace string, roleMask model.Role) (*model.UserRole, error) {
+func (s *AdminService) UpsertUserRole(ctx context.Context, userID, namespace string, roleMask domain.Role) (*domain.UserRole, error) {
 	if _, err := s.db.GetUserByID(ctx, userID); err != nil {
-		return nil, err
+		return nil, mapErr(err)
 	}
-	ur := &model.UserRole{UserID: userID, Namespace: namespace, RoleMask: roleMask}
+	ur := &domain.UserRole{UserID: userID, Namespace: namespace, RoleMask: roleMask}
 	if err := s.db.UpsertUserRole(ctx, ur); err != nil {
 		return nil, err
 	}
@@ -59,17 +59,17 @@ func (s *AdminService) UpsertUserRole(ctx context.Context, userID, namespace str
 }
 
 func (s *AdminService) DeleteUserRole(ctx context.Context, userID, namespace string) error {
-	return s.db.DeleteUserRole(ctx, userID, namespace)
+	return mapErr(s.db.DeleteUserRole(ctx, userID, namespace))
 }
 
 type CreatedToken struct {
-	model.APIToken
+	domain.APIToken
 	RawToken string
 }
 
-func (s *AdminService) CreateAPIToken(ctx context.Context, userID, name, namespace string, role model.Role, expiresInDays int) (*CreatedToken, error) {
+func (s *AdminService) CreateAPIToken(ctx context.Context, userID, name, namespace string, role domain.Role, expiresInDays int) (*CreatedToken, error) {
 	if _, err := s.db.GetUserByID(ctx, userID); err != nil {
-		return nil, err
+		return nil, mapErr(err)
 	}
 
 	raw, tokenHash, err := generateAPITokenValue()
@@ -77,7 +77,7 @@ func (s *AdminService) CreateAPIToken(ctx context.Context, userID, name, namespa
 		return nil, fmt.Errorf("generate token: %w", err)
 	}
 
-	t := &model.APIToken{
+	t := &domain.APIToken{
 		ID:        uuid.NewString(),
 		UserID:    userID,
 		Name:      name,
@@ -97,19 +97,19 @@ func (s *AdminService) CreateAPIToken(ctx context.Context, userID, name, namespa
 	return &CreatedToken{APIToken: *t, RawToken: raw}, nil
 }
 
-func (s *AdminService) ListAPITokens(ctx context.Context, userID string) ([]*model.APIToken, error) {
+func (s *AdminService) ListAPITokens(ctx context.Context, userID string) ([]*domain.APIToken, error) {
 	tokens, err := s.db.ListAPITokens(ctx, userID)
 	if err != nil {
 		return nil, err
 	}
 	if tokens == nil {
-		tokens = []*model.APIToken{}
+		tokens = []*domain.APIToken{}
 	}
 	return tokens, nil
 }
 
 func (s *AdminService) RevokeAPIToken(ctx context.Context, tokenID string) error {
-	return s.db.RevokeAPIToken(ctx, tokenID)
+	return mapErr(s.db.RevokeAPIToken(ctx, tokenID))
 }
 
 func generateAPITokenValue() (raw, hash string, err error) {

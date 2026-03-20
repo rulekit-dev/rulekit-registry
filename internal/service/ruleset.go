@@ -10,36 +10,35 @@ import (
 	"sync"
 	"time"
 
-	"github.com/rulekit-dev/rulekit-registry/internal/blobstore"
-	"github.com/rulekit-dev/rulekit-registry/internal/datastore"
-	"github.com/rulekit-dev/rulekit-registry/internal/dsl"
-	"github.com/rulekit-dev/rulekit-registry/internal/model"
+	"github.com/rulekit-dev/rulekit-registry/internal/domain"
+	"github.com/rulekit-dev/rulekit-registry/internal/domain/dsl"
+	"github.com/rulekit-dev/rulekit-registry/internal/port"
 )
 
 type RulesetService struct {
-	db    datastore.Datastore
-	blobs blobstore.BlobStore
+	db    port.Datastore
+	blobs port.BlobStore
 	pubMu sync.Map // "namespace\x00key" -> *sync.Mutex
 }
 
-func NewRulesetService(db datastore.Datastore, blobs blobstore.BlobStore) *RulesetService {
+func NewRulesetService(db port.Datastore, blobs port.BlobStore) *RulesetService {
 	return &RulesetService{db: db, blobs: blobs}
 }
 
-func (s *RulesetService) ListRulesets(ctx context.Context, namespace string, limit, offset int) ([]*model.Ruleset, error) {
+func (s *RulesetService) ListRulesets(ctx context.Context, namespace string, limit, offset int) ([]*domain.Ruleset, error) {
 	rulesets, err := s.db.ListRulesets(ctx, namespace, limit, offset)
 	if err != nil {
 		return nil, err
 	}
 	if rulesets == nil {
-		rulesets = []*model.Ruleset{}
+		rulesets = []*domain.Ruleset{}
 	}
 	return rulesets, nil
 }
 
-func (s *RulesetService) CreateRuleset(ctx context.Context, namespace, key, name, description string) (*model.Ruleset, error) {
+func (s *RulesetService) CreateRuleset(ctx context.Context, namespace, key, name, description string) (*domain.Ruleset, error) {
 	now := time.Now().UTC()
-	rs := &model.Ruleset{
+	rs := &domain.Ruleset{
 		Namespace:   namespace,
 		Key:         key,
 		Name:        name,
@@ -48,26 +47,28 @@ func (s *RulesetService) CreateRuleset(ctx context.Context, namespace, key, name
 		UpdatedAt:   now,
 	}
 	if err := s.db.CreateRuleset(ctx, rs); err != nil {
-		return nil, err
+		return nil, mapErr(err)
 	}
 	return rs, nil
 }
 
-func (s *RulesetService) GetRuleset(ctx context.Context, namespace, key string) (*model.Ruleset, error) {
-	return s.db.GetRuleset(ctx, namespace, key)
+func (s *RulesetService) GetRuleset(ctx context.Context, namespace, key string) (*domain.Ruleset, error) {
+	rs, err := s.db.GetRuleset(ctx, namespace, key)
+	return rs, mapErr(err)
 }
 
 func (s *RulesetService) DeleteRuleset(ctx context.Context, namespace, key string) error {
-	return s.db.DeleteRuleset(ctx, namespace, key)
+	return mapErr(s.db.DeleteRuleset(ctx, namespace, key))
 }
 
-func (s *RulesetService) GetDraft(ctx context.Context, namespace, key string) (*model.Draft, error) {
-	return s.db.GetDraft(ctx, namespace, key)
+func (s *RulesetService) GetDraft(ctx context.Context, namespace, key string) (*domain.Draft, error) {
+	d, err := s.db.GetDraft(ctx, namespace, key)
+	return d, mapErr(err)
 }
 
-func (s *RulesetService) UpsertDraft(ctx context.Context, namespace, key string, rawDSL json.RawMessage) (*model.Draft, error) {
+func (s *RulesetService) UpsertDraft(ctx context.Context, namespace, key string, rawDSL json.RawMessage) (*domain.Draft, error) {
 	if _, err := s.db.GetRuleset(ctx, namespace, key); err != nil {
-		return nil, err
+		return nil, mapErr(err)
 	}
 
 	if _, err := dsl.ParseAndValidate(rawDSL); err != nil {
@@ -79,7 +80,7 @@ func (s *RulesetService) UpsertDraft(ctx context.Context, namespace, key string,
 		return nil, fmt.Errorf("serialize DSL: %w", err)
 	}
 
-	draft := &model.Draft{
+	draft := &domain.Draft{
 		Namespace:  namespace,
 		RulesetKey: key,
 		DSL:        json.RawMessage(deterministicDSL),
@@ -92,17 +93,17 @@ func (s *RulesetService) UpsertDraft(ctx context.Context, namespace, key string,
 }
 
 func (s *RulesetService) DeleteDraft(ctx context.Context, namespace, key string) error {
-	return s.db.DeleteDraft(ctx, namespace, key)
+	return mapErr(s.db.DeleteDraft(ctx, namespace, key))
 }
 
-func (s *RulesetService) Publish(ctx context.Context, namespace, key string) (*model.Version, error) {
+func (s *RulesetService) Publish(ctx context.Context, namespace, key string) (*domain.Version, error) {
 	if _, err := s.db.GetRuleset(ctx, namespace, key); err != nil {
-		return nil, err
+		return nil, mapErr(err)
 	}
 
 	draft, err := s.db.GetDraft(ctx, namespace, key)
 	if err != nil {
-		return nil, err
+		return nil, mapErr(err)
 	}
 
 	if _, err := dsl.ParseAndValidate(draft.DSL); err != nil {
@@ -131,7 +132,7 @@ func (s *RulesetService) Publish(ctx context.Context, namespace, key string) (*m
 		return nil, fmt.Errorf("next version number: %w", err)
 	}
 
-	manifest := model.VersionManifest{
+	manifest := domain.VersionManifest{
 		Namespace:  namespace,
 		RulesetKey: key,
 		Version:    versionNum,
@@ -153,7 +154,7 @@ func (s *RulesetService) Publish(ctx context.Context, namespace, key string) (*m
 		return nil, fmt.Errorf("store bundle blob: %w", err)
 	}
 
-	v := &model.Version{
+	v := &domain.Version{
 		Namespace:  namespace,
 		RulesetKey: key,
 		Version:    versionNum,
@@ -164,45 +165,45 @@ func (s *RulesetService) Publish(ctx context.Context, namespace, key string) (*m
 	if err := s.db.CreateVersion(ctx, v); err != nil {
 		s.blobs.DeleteDSL(ctx, namespace, key, versionNum)    //nolint:errcheck
 		s.blobs.DeleteBundle(ctx, namespace, key, versionNum) //nolint:errcheck
-		return nil, err
+		return nil, mapErr(err)
 	}
 
 	v.DSL = json.RawMessage(dslBytes)
 	return v, nil
 }
 
-func (s *RulesetService) ListVersions(ctx context.Context, namespace, key string, limit, offset int) ([]*model.Version, error) {
+func (s *RulesetService) ListVersions(ctx context.Context, namespace, key string, limit, offset int) ([]*domain.Version, error) {
 	versions, err := s.db.ListVersions(ctx, namespace, key, limit, offset)
 	if err != nil {
 		return nil, err
 	}
 	if versions == nil {
-		versions = []*model.Version{}
+		versions = []*domain.Version{}
 	}
 	return versions, nil
 }
 
-func (s *RulesetService) GetVersion(ctx context.Context, namespace, key string, versionNum int) (*model.Version, error) {
+func (s *RulesetService) GetVersion(ctx context.Context, namespace, key string, versionNum int) (*domain.Version, error) {
 	v, err := s.db.GetVersion(ctx, namespace, key, versionNum)
 	if err != nil {
-		return nil, err
+		return nil, mapErr(err)
 	}
 	dslData, err := s.blobs.GetDSL(ctx, namespace, key, v.Version)
 	if err != nil {
-		return nil, err
+		return nil, mapErr(err)
 	}
 	v.DSL = json.RawMessage(dslData)
 	return v, nil
 }
 
-func (s *RulesetService) GetLatestVersion(ctx context.Context, namespace, key string) (*model.Version, error) {
+func (s *RulesetService) GetLatestVersion(ctx context.Context, namespace, key string) (*domain.Version, error) {
 	v, err := s.db.GetLatestVersion(ctx, namespace, key)
 	if err != nil {
-		return nil, err
+		return nil, mapErr(err)
 	}
 	dslData, err := s.blobs.GetDSL(ctx, namespace, key, v.Version)
 	if err != nil {
-		return nil, err
+		return nil, mapErr(err)
 	}
 	v.DSL = json.RawMessage(dslData)
 	return v, nil
@@ -210,18 +211,19 @@ func (s *RulesetService) GetLatestVersion(ctx context.Context, namespace, key st
 
 func (s *RulesetService) GetVersionBundle(ctx context.Context, namespace, key string, versionNum int) ([]byte, error) {
 	if _, err := s.db.GetVersion(ctx, namespace, key, versionNum); err != nil {
-		return nil, err
+		return nil, mapErr(err)
 	}
-	return s.blobs.GetBundle(ctx, namespace, key, versionNum)
+	data, err := s.blobs.GetBundle(ctx, namespace, key, versionNum)
+	return data, mapErr(err)
 }
 
 func (s *RulesetService) GetLatestBundle(ctx context.Context, namespace, key string) (int, []byte, error) {
 	v, err := s.db.GetLatestVersion(ctx, namespace, key)
 	if err != nil {
-		return 0, nil, err
+		return 0, nil, mapErr(err)
 	}
 	data, err := s.blobs.GetBundle(ctx, namespace, key, v.Version)
-	return v.Version, data, err
+	return v.Version, data, mapErr(err)
 }
 
 func (s *RulesetService) publishMu(namespace, key string) *sync.Mutex {
@@ -229,7 +231,7 @@ func (s *RulesetService) publishMu(namespace, key string) *sync.Mutex {
 	return v.(*sync.Mutex)
 }
 
-func buildBundle(manifest model.VersionManifest, dslBytes []byte) ([]byte, error) {
+func buildBundle(manifest domain.VersionManifest, dslBytes []byte) ([]byte, error) {
 	manifestBytes, err := dsl.MarshalDeterministic(manifest)
 	if err != nil {
 		return nil, fmt.Errorf("marshal manifest: %w", err)

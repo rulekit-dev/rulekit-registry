@@ -11,18 +11,17 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/rulekit-dev/rulekit-registry/internal/blobstore"
-	fsblobstore "github.com/rulekit-dev/rulekit-registry/internal/blobstore/fs"
-	s3blob "github.com/rulekit-dev/rulekit-registry/internal/blobstore/s3"
+	httpadapter "github.com/rulekit-dev/rulekit-registry/internal/adapter/http"
+	"github.com/rulekit-dev/rulekit-registry/internal/adapter/http/handler"
+	fsblobstore "github.com/rulekit-dev/rulekit-registry/internal/adapter/blob/fs"
+	s3blob "github.com/rulekit-dev/rulekit-registry/internal/adapter/blob/s3"
+	"github.com/rulekit-dev/rulekit-registry/internal/adapter/mailer"
+	sqlitestore "github.com/rulekit-dev/rulekit-registry/internal/adapter/store/sqlite"
+	postgresstore "github.com/rulekit-dev/rulekit-registry/internal/adapter/store/postgres"
 	"github.com/rulekit-dev/rulekit-registry/internal/config"
-	"github.com/rulekit-dev/rulekit-registry/internal/datastore"
-	"github.com/rulekit-dev/rulekit-registry/internal/datastore/postgres"
-	"github.com/rulekit-dev/rulekit-registry/internal/datastore/sqlite"
-	"github.com/rulekit-dev/rulekit-registry/internal/mailer"
-	"github.com/rulekit-dev/rulekit-registry/internal/model"
+	"github.com/rulekit-dev/rulekit-registry/internal/domain"
+	"github.com/rulekit-dev/rulekit-registry/internal/port"
 	"github.com/rulekit-dev/rulekit-registry/internal/service"
-	httptransport "github.com/rulekit-dev/rulekit-registry/internal/transport/http"
-	"github.com/rulekit-dev/rulekit-registry/internal/transport/http/handler"
 )
 
 func main() {
@@ -34,12 +33,12 @@ func main() {
 		os.Exit(1)
 	}
 
-	var db datastore.Datastore
+	var db port.Datastore
 
 	switch cfg.Store {
 	case "sqlite":
 		slog.Info("using sqlite store", "data_dir", cfg.DataDir)
-		sqliteStore, err := sqlite.New(cfg.DataDir)
+		sqliteStore, err := sqlitestore.New(cfg.DataDir)
 		if err != nil {
 			slog.Error("failed to initialise sqlite store", "error", err)
 			os.Exit(1)
@@ -47,7 +46,7 @@ func main() {
 		db = sqliteStore
 	case "postgres":
 		slog.Info("using postgres store", "database_url", cfg.DatabaseURL)
-		pgStore, err := postgres.New(cfg.DatabaseURL)
+		pgStore, err := postgresstore.New(cfg.DatabaseURL)
 		if err != nil {
 			slog.Error("failed to initialise postgres store", "error", err)
 			os.Exit(1)
@@ -63,7 +62,7 @@ func main() {
 		}
 	}()
 
-	var blobs blobstore.BlobStore
+	var blobs port.BlobStore
 	switch cfg.BlobStore {
 	case "fs":
 		slog.Info("using fs blob store", "blob_dir", cfg.BlobDir)
@@ -87,7 +86,7 @@ func main() {
 	}
 	defer blobs.Close()
 
-	var m mailer.Mailer
+	var m port.Mailer
 	if cfg.SMTPHost != "" {
 		m = mailer.NewSMTP(mailer.SMTPConfig{
 			Host:     cfg.SMTPHost,
@@ -116,7 +115,7 @@ func main() {
 		bootstrapAdmin(db, cfg.AdminEmail)
 	}
 
-	httpHandler := httptransport.NewRouter(rulesetHandler, authHandler, adminHandler, db, cfg, startTime)
+	httpHandler := httpadapter.NewRouter(rulesetHandler, authHandler, adminHandler, db, cfg, startTime)
 
 	srv := &http.Server{
 		Addr:         cfg.Addr,
@@ -159,7 +158,7 @@ func main() {
 
 // bootstrapAdmin ensures the configured admin email exists with a global admin role.
 // Safe to call on every startup — idempotent.
-func bootstrapAdmin(db datastore.Datastore, email string) {
+func bootstrapAdmin(db port.Datastore, email string) {
 	if email == "" {
 		return
 	}
@@ -168,7 +167,7 @@ func bootstrapAdmin(db datastore.Datastore, email string) {
 	user, err := db.GetUserByEmail(ctx, email)
 	if err != nil {
 		now := time.Now().UTC()
-		user = &model.User{
+		user = &domain.User{
 			ID:          uuid.NewString(),
 			Email:       email,
 			CreatedAt:   now,
@@ -180,10 +179,10 @@ func bootstrapAdmin(db datastore.Datastore, email string) {
 		}
 	}
 
-	if err := db.UpsertUserRole(ctx, &model.UserRole{
+	if err := db.UpsertUserRole(ctx, &domain.UserRole{
 		UserID:    user.ID,
 		Namespace: "*",
-		RoleMask:  model.RoleAdmin,
+		RoleMask:  domain.RoleAdmin,
 	}); err != nil {
 		slog.Error("bootstrap admin: failed to assign admin role", "error", err)
 		return

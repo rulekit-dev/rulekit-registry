@@ -7,7 +7,7 @@ import (
 
 	"github.com/golang-jwt/jwt/v5"
 
-	"github.com/rulekit-dev/rulekit-registry/internal/model"
+	"github.com/rulekit-dev/rulekit-registry/internal/domain"
 )
 
 const (
@@ -17,16 +17,16 @@ const (
 
 type Claims struct {
 	jwt.RegisteredClaims
-	Email string        `json:"email"`
-	Roles []RoleClaim   `json:"roles"`
+	Email string      `json:"email"`
+	Roles []RoleClaim `json:"roles"`
 }
 
 type RoleClaim struct {
-	Namespace string     `json:"ns"`
-	RoleMask  model.Role `json:"mask"`
+	Namespace string      `json:"ns"`
+	RoleMask  domain.Role `json:"mask"`
 }
 
-func SignAccessToken(secret []byte, user *model.User, roles []*model.UserRole) (string, error) {
+func SignAccessToken(secret []byte, user *domain.User, roles []*domain.UserRole) (string, error) {
 	claims := Claims{
 		RegisteredClaims: jwt.RegisteredClaims{
 			Subject:   user.ID,
@@ -69,7 +69,7 @@ var (
 	ErrTokenInvalid = errors.New("token invalid")
 )
 
-func toRoleClaims(roles []*model.UserRole) []RoleClaim {
+func toRoleClaims(roles []*domain.UserRole) []RoleClaim {
 	out := make([]RoleClaim, len(roles))
 	for i, r := range roles {
 		out[i] = RoleClaim{Namespace: r.Namespace, RoleMask: r.RoleMask}
@@ -79,8 +79,8 @@ func toRoleClaims(roles []*model.UserRole) []RoleClaim {
 
 // RoleForNamespace returns the effective role mask for a namespace.
 // A global role (namespace="*") supersedes namespace-specific roles.
-func (c *Claims) RoleForNamespace(namespace string) model.Role {
-	var mask model.Role
+func (c *Claims) RoleForNamespace(namespace string) domain.Role {
+	var mask domain.Role
 	for _, r := range c.Roles {
 		if r.Namespace == "*" {
 			return r.RoleMask // global role applies everywhere
