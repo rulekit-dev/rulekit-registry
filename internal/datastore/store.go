@@ -1,5 +1,5 @@
-// Package store defines the storage abstraction for rulekit-registry.
-package store
+// Package datastore defines the storage abstraction for rulekit-registry.
+package datastore
 
 import (
 	"context"
@@ -8,14 +8,14 @@ import (
 	"github.com/rulekit-dev/rulekit-registry/internal/model"
 )
 
-// Sentinel errors returned by Store implementations.
+// Sentinel errors returned by Datastore implementations.
 var (
 	ErrNotFound         = errors.New("not found")
 	ErrAlreadyExists    = errors.New("already exists")
 	ErrVersionImmutable = errors.New("version already published and is immutable")
 )
 
-type Store interface {
+type Datastore interface {
 	// Ruleset operations
 	ListRulesets(ctx context.Context, namespace string, limit, offset int) ([]*model.Ruleset, error)
 	CreateRuleset(ctx context.Context, r *model.Ruleset) error

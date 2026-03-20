@@ -1,4 +1,4 @@
-package api
+package httptransport
 
 import (
 	"context"
@@ -7,18 +7,18 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/rulekit-dev/rulekit-registry/internal/api/handler"
 	"github.com/rulekit-dev/rulekit-registry/internal/config"
+	"github.com/rulekit-dev/rulekit-registry/internal/datastore"
 	"github.com/rulekit-dev/rulekit-registry/internal/model"
-	"github.com/rulekit-dev/rulekit-registry/internal/store"
+	"github.com/rulekit-dev/rulekit-registry/internal/transport/http/handler"
 	"github.com/rulekit-dev/rulekit-registry/internal/version"
 )
 
-func NewRouter(h *handler.RulesetHandler, auth *handler.AuthHandler, admin *handler.AdminHandler, st store.Store, cfg *config.Config, startTime time.Time) http.Handler {
+func NewRouter(h *handler.RulesetHandler, auth *handler.AuthHandler, admin *handler.AdminHandler, db datastore.Datastore, cfg *config.Config, startTime time.Time) http.Handler {
 	mux := http.NewServeMux()
 
 	if cfg.AuthMode == config.AuthModeJWT {
-		registerJWTRoutes(mux, h, auth, admin, st, cfg)
+		registerJWTRoutes(mux, h, auth, admin, db, cfg)
 	} else {
 		registerLegacyRoutes(mux, h, cfg.APIKey)
 	}
@@ -30,7 +30,7 @@ func NewRouter(h *handler.RulesetHandler, auth *handler.AuthHandler, admin *hand
 		uptime := int64(math.Round(time.Since(startTime).Seconds()))
 		w.Header().Set("Content-Type", "application/json")
 
-		if err := st.Ping(ctx); err != nil {
+		if err := db.Ping(ctx); err != nil {
 			w.WriteHeader(http.StatusServiceUnavailable)
 			json.NewEncoder(w).Encode(map[string]any{ //nolint:errcheck
 				"status":         "degraded",
@@ -69,7 +69,7 @@ func registerLegacyRoutes(mux *http.ServeMux, h *handler.RulesetHandler, apiKey 
 	mux.Handle("/v1/", v1Handler)
 }
 
-func registerJWTRoutes(mux *http.ServeMux, h *handler.RulesetHandler, auth *handler.AuthHandler, admin *handler.AdminHandler, st store.Store, cfg *config.Config) {
+func registerJWTRoutes(mux *http.ServeMux, h *handler.RulesetHandler, auth *handler.AuthHandler, admin *handler.AdminHandler, db datastore.Datastore, cfg *config.Config) {
 	secret := []byte(cfg.JWTSecret)
 
 	// Public auth endpoints — no token required.
@@ -78,7 +78,7 @@ func registerJWTRoutes(mux *http.ServeMux, h *handler.RulesetHandler, auth *hand
 	mux.HandleFunc("POST /v1/auth/refresh", auth.Refresh)
 
 	// Logout requires a valid token to identify the session.
-	mux.Handle("POST /v1/auth/logout", apiTokenMiddleware(st, secret, http.HandlerFunc(auth.Logout)))
+	mux.Handle("POST /v1/auth/logout", apiTokenMiddleware(db, secret, http.HandlerFunc(auth.Logout)))
 
 	// Ruleset API: viewer+ for reads, editor+ for writes.
 	v1 := http.NewServeMux()
@@ -106,7 +106,7 @@ func registerJWTRoutes(mux *http.ServeMux, h *handler.RulesetHandler, auth *hand
 	v1.Handle("GET /v1/admin/tokens", requireAdmin(http.HandlerFunc(admin.ListAPITokens)))
 	v1.Handle("DELETE /v1/admin/tokens/{tokenID}", requireAdmin(http.HandlerFunc(admin.RevokeAPIToken)))
 
-	mux.Handle("/v1/", apiTokenMiddleware(st, secret, v1))
+	mux.Handle("/v1/", apiTokenMiddleware(db, secret, v1))
 }
 
 func registerRulesetRoutes(mux *http.ServeMux, h *handler.RulesetHandler) {

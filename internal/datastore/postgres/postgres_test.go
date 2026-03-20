@@ -4,9 +4,9 @@ import (
 	"os"
 	"testing"
 
-	"github.com/rulekit-dev/rulekit-registry/internal/store"
-	"github.com/rulekit-dev/rulekit-registry/internal/store/postgres"
-	"github.com/rulekit-dev/rulekit-registry/internal/store/testhelper"
+	"github.com/rulekit-dev/rulekit-registry/internal/datastore"
+	"github.com/rulekit-dev/rulekit-registry/internal/datastore/postgres"
+	"github.com/rulekit-dev/rulekit-registry/internal/datastore/testhelper"
 )
 
 func TestPostgres(t *testing.T) {
@@ -23,7 +23,7 @@ func TestPostgres(t *testing.T) {
 	}
 	t.Cleanup(func() { shared.Close() })
 
-	testhelper.RunSuite(t, func(t *testing.T) store.Store {
+	testhelper.RunSuite(t, func(t *testing.T) datastore.Datastore {
 		return shared
 	})
 }

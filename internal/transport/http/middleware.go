@@ -1,4 +1,4 @@
-package api
+package httptransport
 
 import (
 	"crypto/sha256"
@@ -11,10 +11,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/rulekit-dev/rulekit-registry/internal/api/handler"
+	"github.com/rulekit-dev/rulekit-registry/internal/datastore"
 	"github.com/rulekit-dev/rulekit-registry/internal/jwtutil"
 	"github.com/rulekit-dev/rulekit-registry/internal/model"
-	"github.com/rulekit-dev/rulekit-registry/internal/store"
+	"github.com/rulekit-dev/rulekit-registry/internal/transport/http/handler"
 )
 
 type responseWriter struct {
@@ -76,7 +76,7 @@ func jwtAuthMiddleware(secret []byte, next http.Handler) http.Handler {
 }
 
 // apiTokenMiddleware tries JWT first, falls back to opaque DB token lookup.
-func apiTokenMiddleware(st store.Store, secret []byte, next http.Handler) http.Handler {
+func apiTokenMiddleware(db datastore.Datastore, secret []byte, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		raw := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
 		if raw == "" {
@@ -99,8 +99,8 @@ func apiTokenMiddleware(st store.Store, secret []byte, next http.Handler) http.H
 		// Fall back to opaque API token lookup.
 		sum := sha256.Sum256([]byte(raw))
 		tokenHash := hex.EncodeToString(sum[:])
-		t, dbErr := st.GetAPITokenByHash(r.Context(), tokenHash)
-		if errors.Is(dbErr, store.ErrNotFound) {
+		t, dbErr := db.GetAPITokenByHash(r.Context(), tokenHash)
+		if errors.Is(dbErr, datastore.ErrNotFound) {
 			handler.WriteError(w, http.StatusUnauthorized, "UNAUTHORIZED", "invalid or missing token")
 			return
 		}

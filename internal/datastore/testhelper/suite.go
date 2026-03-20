@@ -1,4 +1,4 @@
-// Package testhelper provides a shared acceptance test suite for store.Store
+// Package testhelper provides a shared acceptance test suite for datastore.Datastore
 // implementations.
 package testhelper
 
@@ -10,7 +10,7 @@ import (
 	"time"
 
 	"github.com/rulekit-dev/rulekit-registry/internal/model"
-	"github.com/rulekit-dev/rulekit-registry/internal/store"
+	"github.com/rulekit-dev/rulekit-registry/internal/datastore"
 )
 
 // jsonEqual reports whether two JSON byte slices are semantically equal,
@@ -32,7 +32,7 @@ func jsonEqual(a, b []byte) bool {
 // RunSuite runs the full acceptance test suite against the store returned by
 // newStore. newStore is called once per sub-test so each test gets a clean
 // store instance.
-func RunSuite(t *testing.T, newStore func(t *testing.T) store.Store) {
+func RunSuite(t *testing.T, newStore func(t *testing.T) datastore.Datastore) {
 	t.Helper()
 
 	t.Run("TestCreateAndGetRuleset", func(t *testing.T) {
@@ -79,7 +79,7 @@ func RunSuite(t *testing.T, newStore func(t *testing.T) store.Store) {
 
 		// Non-existent ruleset should return ErrNotFound.
 		_, err = s.GetRuleset(ctx, "acme", "nonexistent")
-		if !errors.Is(err, store.ErrNotFound) {
+		if !errors.Is(err, datastore.ErrNotFound) {
 			t.Errorf("GetRuleset non-existent: got %v, want ErrNotFound", err)
 		}
 	})
@@ -218,7 +218,7 @@ func RunSuite(t *testing.T, newStore func(t *testing.T) store.Store) {
 
 		// Get draft for non-existent key returns ErrNotFound.
 		_, err = s.GetDraft(ctx, ns, "nonexistent-key")
-		if !errors.Is(err, store.ErrNotFound) {
+		if !errors.Is(err, datastore.ErrNotFound) {
 			t.Errorf("GetDraft non-existent: got %v, want ErrNotFound", err)
 		}
 	})
@@ -350,7 +350,7 @@ func RunSuite(t *testing.T, newStore func(t *testing.T) store.Store) {
 
 		// Second creation of the same version must return ErrVersionImmutable.
 		err := s.CreateVersion(ctx, v1)
-		if !errors.Is(err, store.ErrVersionImmutable) {
+		if !errors.Is(err, datastore.ErrVersionImmutable) {
 			t.Errorf("CreateVersion (duplicate): got %v, want ErrVersionImmutable", err)
 		}
 	})

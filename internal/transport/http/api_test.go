@@ -1,4 +1,4 @@
-package api_test
+package httptransport_test
 
 import (
 	"bytes"
@@ -8,12 +8,13 @@ import (
 	"testing"
 	"time"
 
-	"github.com/rulekit-dev/rulekit-registry/internal/api"
-	"github.com/rulekit-dev/rulekit-registry/internal/api/handler"
+	httptransport "github.com/rulekit-dev/rulekit-registry/internal/transport/http"
+	"github.com/rulekit-dev/rulekit-registry/internal/transport/http/handler"
 	fsblobstore "github.com/rulekit-dev/rulekit-registry/internal/blobstore/fs"
 	"github.com/rulekit-dev/rulekit-registry/internal/config"
 	"github.com/rulekit-dev/rulekit-registry/internal/model"
-	"github.com/rulekit-dev/rulekit-registry/internal/store/sqlite"
+	"github.com/rulekit-dev/rulekit-registry/internal/datastore/sqlite"
+	"github.com/rulekit-dev/rulekit-registry/internal/service"
 )
 
 func legacyCfg(apiKey string) *config.Config {
@@ -24,7 +25,7 @@ func newTestServer(t *testing.T) *httptest.Server {
 	t.Helper()
 	dir := t.TempDir()
 
-	st, err := sqlite.New(dir)
+	db, err := sqlite.New(dir)
 	if err != nil {
 		t.Fatalf("sqlite.New: %v", err)
 	}
@@ -35,12 +36,13 @@ func newTestServer(t *testing.T) *httptest.Server {
 	}
 
 	t.Cleanup(func() {
-		st.Close()
+		db.Close()
 		blobs.Close()
 	})
 
-	h := handler.NewRulesetHandler(st, blobs)
-	return httptest.NewServer(api.NewRouter(h, nil, nil, st, legacyCfg(""), time.Now()))
+	svc := service.NewRulesetService(db, blobs)
+	h := handler.NewRulesetHandler(svc)
+	return httptest.NewServer(httptransport.NewRouter(h, nil, nil, db, legacyCfg(""), time.Now()))
 }
 
 func mustJSON(t *testing.T, v any) *bytes.Buffer {
@@ -668,11 +670,12 @@ func TestGetLatestBundle(t *testing.T) {
 
 func TestAuthRequiredWhenKeySet(t *testing.T) {
 	dir := t.TempDir()
-	st, _ := sqlite.New(dir)
+	db, _ := sqlite.New(dir)
 	blobs, _ := fsblobstore.New(dir + "/blobs")
-	t.Cleanup(func() { st.Close(); blobs.Close() })
+	t.Cleanup(func() { db.Close(); blobs.Close() })
 
-	srv := httptest.NewServer(api.NewRouter(handler.NewRulesetHandler(st, blobs), nil, nil, st, legacyCfg("secret-key"), time.Now()))
+	svc := service.NewRulesetService(db, blobs)
+	srv := httptest.NewServer(httptransport.NewRouter(handler.NewRulesetHandler(svc), nil, nil, db, legacyCfg("secret-key"), time.Now()))
 	defer srv.Close()
 
 	// No token → 401
@@ -712,11 +715,12 @@ func TestAuthRequiredWhenKeySet(t *testing.T) {
 
 func TestHealthzSkipsAuth(t *testing.T) {
 	dir := t.TempDir()
-	st, _ := sqlite.New(dir)
+	db, _ := sqlite.New(dir)
 	blobs, _ := fsblobstore.New(dir + "/blobs")
-	t.Cleanup(func() { st.Close(); blobs.Close() })
+	t.Cleanup(func() { db.Close(); blobs.Close() })
 
-	srv := httptest.NewServer(api.NewRouter(handler.NewRulesetHandler(st, blobs), nil, nil, st, legacyCfg("secret-key"), time.Now()))
+	svc := service.NewRulesetService(db, blobs)
+	srv := httptest.NewServer(httptransport.NewRouter(handler.NewRulesetHandler(svc), nil, nil, db, legacyCfg("secret-key"), time.Now()))
 	defer srv.Close()
 
 	resp, err := http.Get(srv.URL + "/healthz")

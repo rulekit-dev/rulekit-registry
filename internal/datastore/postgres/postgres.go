@@ -11,7 +11,7 @@ import (
 	_ "github.com/jackc/pgx/v5/stdlib"
 
 	"github.com/rulekit-dev/rulekit-registry/internal/model"
-	"github.com/rulekit-dev/rulekit-registry/internal/store"
+	"github.com/rulekit-dev/rulekit-registry/internal/datastore"
 )
 
 const schema = `
@@ -126,7 +126,7 @@ func (s *PostgresStore) CreateRuleset(ctx context.Context, r *model.Ruleset) err
 	)
 	if err != nil {
 		if isUniqueViolation(err) {
-			return store.ErrAlreadyExists
+			return datastore.ErrAlreadyExists
 		}
 		return err
 	}
@@ -140,7 +140,7 @@ func (s *PostgresStore) GetRuleset(ctx context.Context, namespace, key string) (
          FROM rulesets WHERE namespace = $1 AND key = $2`, namespace, key).
 		Scan(&r.Namespace, &r.Key, &r.Name, &r.Description, &r.CreatedAt, &r.UpdatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
-		return nil, store.ErrNotFound
+		return nil, datastore.ErrNotFound
 	}
 	if err != nil {
 		return nil, err
@@ -158,7 +158,7 @@ func (s *PostgresStore) GetDraft(ctx context.Context, namespace, key string) (*m
          FROM drafts WHERE namespace = $1 AND ruleset_key = $2`, namespace, key).
 		Scan(&d.Namespace, &d.RulesetKey, &d.DSL, &ua)
 	if errors.Is(err, sql.ErrNoRows) {
-		return nil, store.ErrNotFound
+		return nil, datastore.ErrNotFound
 	}
 	if err != nil {
 		return nil, err
@@ -189,7 +189,7 @@ func (s *PostgresStore) DeleteDraft(ctx context.Context, namespace, key string) 
 		return err
 	}
 	if n == 0 {
-		return store.ErrNotFound
+		return datastore.ErrNotFound
 	}
 	return nil
 }
@@ -205,7 +205,7 @@ func (s *PostgresStore) DeleteRuleset(ctx context.Context, namespace, key string
 		return err
 	}
 	if n == 0 {
-		return store.ErrNotFound
+		return datastore.ErrNotFound
 	}
 	return nil
 }
@@ -241,7 +241,7 @@ func (s *PostgresStore) GetVersion(ctx context.Context, namespace, key string, v
 		namespace, key, version).
 		Scan(&v.Namespace, &v.RulesetKey, &v.Version, &v.Checksum, &ca)
 	if errors.Is(err, sql.ErrNoRows) {
-		return nil, store.ErrNotFound
+		return nil, datastore.ErrNotFound
 	}
 	if err != nil {
 		return nil, err
@@ -259,7 +259,7 @@ func (s *PostgresStore) GetLatestVersion(ctx context.Context, namespace, key str
          ORDER BY version DESC LIMIT 1`, namespace, key).
 		Scan(&v.Namespace, &v.RulesetKey, &v.Version, &v.Checksum, &ca)
 	if errors.Is(err, sql.ErrNoRows) {
-		return nil, store.ErrNotFound
+		return nil, datastore.ErrNotFound
 	}
 	if err != nil {
 		return nil, err
@@ -282,7 +282,7 @@ func (s *PostgresStore) CreateVersion(ctx context.Context, v *model.Version) err
 		return err
 	}
 	if count > 0 {
-		return store.ErrVersionImmutable
+		return datastore.ErrVersionImmutable
 	}
 
 	if _, err := tx.ExecContext(ctx,
@@ -318,7 +318,7 @@ func (s *PostgresStore) CreateUser(ctx context.Context, u *model.User) error {
 		u.ID, u.Email, u.CreatedAt.UTC(), u.LastLoginAt.UTC())
 	if err != nil {
 		if isUniqueViolation(err) {
-			return store.ErrAlreadyExists
+			return datastore.ErrAlreadyExists
 		}
 		return err
 	}
@@ -331,7 +331,7 @@ func (s *PostgresStore) GetUserByEmail(ctx context.Context, email string) (*mode
 		`SELECT id, email, created_at, last_login_at FROM users WHERE email = $1`, email).
 		Scan(&u.ID, &u.Email, &u.CreatedAt, &u.LastLoginAt)
 	if errors.Is(err, sql.ErrNoRows) {
-		return nil, store.ErrNotFound
+		return nil, datastore.ErrNotFound
 	}
 	if err != nil {
 		return nil, err
@@ -347,7 +347,7 @@ func (s *PostgresStore) GetUserByID(ctx context.Context, id string) (*model.User
 		`SELECT id, email, created_at, last_login_at FROM users WHERE id = $1`, id).
 		Scan(&u.ID, &u.Email, &u.CreatedAt, &u.LastLoginAt)
 	if errors.Is(err, sql.ErrNoRows) {
-		return nil, store.ErrNotFound
+		return nil, datastore.ErrNotFound
 	}
 	if err != nil {
 		return nil, err
@@ -390,7 +390,7 @@ func (s *PostgresStore) DeleteUser(ctx context.Context, userID string) error {
 	}
 	n, _ := res.RowsAffected()
 	if n == 0 {
-		return store.ErrNotFound
+		return datastore.ErrNotFound
 	}
 	return nil
 }
@@ -413,7 +413,7 @@ func (s *PostgresStore) GetUnusedOTPCode(ctx context.Context, userID string) (*m
 		userID, time.Now().UTC()).
 		Scan(&otp.ID, &otp.UserID, &otp.CodeHash, &otp.ExpiresAt)
 	if errors.Is(err, sql.ErrNoRows) {
-		return nil, store.ErrNotFound
+		return nil, datastore.ErrNotFound
 	}
 	if err != nil {
 		return nil, err
@@ -446,7 +446,7 @@ func (s *PostgresStore) CreateAPIToken(ctx context.Context, t *model.APIToken) e
 		t.ID, t.UserID, t.Name, t.TokenHash, t.Namespace, int(t.Role), t.CreatedAt.UTC(), exp)
 	if err != nil {
 		if isUniqueViolation(err) {
-			return store.ErrAlreadyExists
+			return datastore.ErrAlreadyExists
 		}
 		return err
 	}
@@ -462,7 +462,7 @@ func (s *PostgresStore) GetAPITokenByHash(ctx context.Context, tokenHash string)
          FROM api_tokens WHERE token_hash = $1`, tokenHash).
 		Scan(&t.ID, &t.UserID, &t.Name, &t.TokenHash, &t.Namespace, &role, &t.CreatedAt, &exp, &rev)
 	if errors.Is(err, sql.ErrNoRows) {
-		return nil, store.ErrNotFound
+		return nil, datastore.ErrNotFound
 	}
 	if err != nil {
 		return nil, err
@@ -520,7 +520,7 @@ func (s *PostgresStore) RevokeAPIToken(ctx context.Context, tokenID string) erro
 	}
 	n, _ := res.RowsAffected()
 	if n == 0 {
-		return store.ErrNotFound
+		return datastore.ErrNotFound
 	}
 	return nil
 }
@@ -542,7 +542,7 @@ func (s *PostgresStore) GetUserRole(ctx context.Context, userID, namespace strin
 		`SELECT user_id, namespace, role_mask FROM user_roles WHERE user_id = $1 AND namespace = $2`,
 		userID, namespace).Scan(&ur.UserID, &ur.Namespace, &mask)
 	if errors.Is(err, sql.ErrNoRows) {
-		return nil, store.ErrNotFound
+		return nil, datastore.ErrNotFound
 	}
 	if err != nil {
 		return nil, err
@@ -579,7 +579,7 @@ func (s *PostgresStore) DeleteUserRole(ctx context.Context, userID, namespace st
 	}
 	n, _ := res.RowsAffected()
 	if n == 0 {
-		return store.ErrNotFound
+		return datastore.ErrNotFound
 	}
 	return nil
 }

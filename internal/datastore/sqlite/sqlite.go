@@ -13,7 +13,7 @@ import (
 	_ "modernc.org/sqlite"
 
 	"github.com/rulekit-dev/rulekit-registry/internal/model"
-	"github.com/rulekit-dev/rulekit-registry/internal/store"
+	"github.com/rulekit-dev/rulekit-registry/internal/datastore"
 )
 
 const schema = `
@@ -131,7 +131,7 @@ func (s *SQLiteStore) CreateRuleset(ctx context.Context, r *model.Ruleset) error
 	)
 	if err != nil {
 		if isUniqueConstraint(err) {
-			return store.ErrAlreadyExists
+			return datastore.ErrAlreadyExists
 		}
 		return err
 	}
@@ -146,7 +146,7 @@ func (s *SQLiteStore) GetRuleset(ctx context.Context, namespace, key string) (*m
          FROM rulesets WHERE namespace = ? AND key = ?`, namespace, key).
 		Scan(&r.Namespace, &r.Key, &r.Name, &r.Description, &ca, &ua)
 	if errors.Is(err, sql.ErrNoRows) {
-		return nil, store.ErrNotFound
+		return nil, datastore.ErrNotFound
 	}
 	if err != nil {
 		return nil, err
@@ -164,7 +164,7 @@ func (s *SQLiteStore) GetDraft(ctx context.Context, namespace, key string) (*mod
          FROM drafts WHERE namespace = ? AND ruleset_key = ?`, namespace, key).
 		Scan(&d.Namespace, &d.RulesetKey, &dslStr, &ua)
 	if errors.Is(err, sql.ErrNoRows) {
-		return nil, store.ErrNotFound
+		return nil, datastore.ErrNotFound
 	}
 	if err != nil {
 		return nil, err
@@ -195,7 +195,7 @@ func (s *SQLiteStore) DeleteDraft(ctx context.Context, namespace, key string) er
 		return err
 	}
 	if n == 0 {
-		return store.ErrNotFound
+		return datastore.ErrNotFound
 	}
 	return nil
 }
@@ -211,7 +211,7 @@ func (s *SQLiteStore) DeleteRuleset(ctx context.Context, namespace, key string) 
 		return err
 	}
 	if n == 0 {
-		return store.ErrNotFound
+		return datastore.ErrNotFound
 	}
 	return nil
 }
@@ -247,7 +247,7 @@ func (s *SQLiteStore) GetVersion(ctx context.Context, namespace, key string, ver
 		namespace, key, version).
 		Scan(&v.Namespace, &v.RulesetKey, &v.Version, &v.Checksum, &ca)
 	if errors.Is(err, sql.ErrNoRows) {
-		return nil, store.ErrNotFound
+		return nil, datastore.ErrNotFound
 	}
 	if err != nil {
 		return nil, err
@@ -265,7 +265,7 @@ func (s *SQLiteStore) GetLatestVersion(ctx context.Context, namespace, key strin
          ORDER BY version DESC LIMIT 1`, namespace, key).
 		Scan(&v.Namespace, &v.RulesetKey, &v.Version, &v.Checksum, &ca)
 	if errors.Is(err, sql.ErrNoRows) {
-		return nil, store.ErrNotFound
+		return nil, datastore.ErrNotFound
 	}
 	if err != nil {
 		return nil, err
@@ -288,7 +288,7 @@ func (s *SQLiteStore) CreateVersion(ctx context.Context, v *model.Version) error
 		return err
 	}
 	if count > 0 {
-		return store.ErrVersionImmutable
+		return datastore.ErrVersionImmutable
 	}
 
 	if _, err := tx.ExecContext(ctx,
@@ -327,7 +327,7 @@ func (s *SQLiteStore) CreateUser(ctx context.Context, u *model.User) error {
 	)
 	if err != nil {
 		if isUniqueConstraint(err) {
-			return store.ErrAlreadyExists
+			return datastore.ErrAlreadyExists
 		}
 		return err
 	}
@@ -341,7 +341,7 @@ func (s *SQLiteStore) GetUserByEmail(ctx context.Context, email string) (*model.
 		`SELECT id, email, created_at, last_login_at FROM users WHERE email = ?`, email).
 		Scan(&u.ID, &u.Email, &ca, &lla)
 	if errors.Is(err, sql.ErrNoRows) {
-		return nil, store.ErrNotFound
+		return nil, datastore.ErrNotFound
 	}
 	if err != nil {
 		return nil, err
@@ -358,7 +358,7 @@ func (s *SQLiteStore) GetUserByID(ctx context.Context, id string) (*model.User, 
 		`SELECT id, email, created_at, last_login_at FROM users WHERE id = ?`, id).
 		Scan(&u.ID, &u.Email, &ca, &lla)
 	if errors.Is(err, sql.ErrNoRows) {
-		return nil, store.ErrNotFound
+		return nil, datastore.ErrNotFound
 	}
 	if err != nil {
 		return nil, err
@@ -403,7 +403,7 @@ func (s *SQLiteStore) DeleteUser(ctx context.Context, userID string) error {
 	}
 	n, _ := res.RowsAffected()
 	if n == 0 {
-		return store.ErrNotFound
+		return datastore.ErrNotFound
 	}
 	return nil
 }
@@ -429,7 +429,7 @@ func (s *SQLiteStore) GetUnusedOTPCode(ctx context.Context, userID string) (*mod
 		userID, time.Now().UTC().Format(time.RFC3339Nano)).
 		Scan(&otp.ID, &otp.UserID, &otp.CodeHash, &exp)
 	if errors.Is(err, sql.ErrNoRows) {
-		return nil, store.ErrNotFound
+		return nil, datastore.ErrNotFound
 	}
 	if err != nil {
 		return nil, err
@@ -467,7 +467,7 @@ func (s *SQLiteStore) CreateAPIToken(ctx context.Context, t *model.APIToken) err
 	)
 	if err != nil {
 		if isUniqueConstraint(err) {
-			return store.ErrAlreadyExists
+			return datastore.ErrAlreadyExists
 		}
 		return err
 	}
@@ -483,7 +483,7 @@ func (s *SQLiteStore) GetAPITokenByHash(ctx context.Context, tokenHash string) (
          FROM api_tokens WHERE token_hash = ?`, tokenHash).
 		Scan(&t.ID, &t.UserID, &t.Name, &t.TokenHash, &t.Namespace, &role, &ca, &exp, &rev)
 	if errors.Is(err, sql.ErrNoRows) {
-		return nil, store.ErrNotFound
+		return nil, datastore.ErrNotFound
 	}
 	if err != nil {
 		return nil, err
@@ -541,7 +541,7 @@ func (s *SQLiteStore) RevokeAPIToken(ctx context.Context, tokenID string) error 
 	}
 	n, _ := res.RowsAffected()
 	if n == 0 {
-		return store.ErrNotFound
+		return datastore.ErrNotFound
 	}
 	return nil
 }
@@ -562,7 +562,7 @@ func (s *SQLiteStore) GetUserRole(ctx context.Context, userID, namespace string)
 		`SELECT user_id, namespace, role_mask FROM user_roles WHERE user_id = ? AND namespace = ?`,
 		userID, namespace).Scan(&ur.UserID, &ur.Namespace, &mask)
 	if errors.Is(err, sql.ErrNoRows) {
-		return nil, store.ErrNotFound
+		return nil, datastore.ErrNotFound
 	}
 	if err != nil {
 		return nil, err
@@ -599,7 +599,7 @@ func (s *SQLiteStore) DeleteUserRole(ctx context.Context, userID, namespace stri
 	}
 	n, _ := res.RowsAffected()
 	if n == 0 {
-		return store.ErrNotFound
+		return datastore.ErrNotFound
 	}
 	return nil
 }
