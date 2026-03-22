@@ -52,7 +52,7 @@ func (h *AdminHandler) ListUserRoles(w http.ResponseWriter, r *http.Request) {
 
 func (h *AdminHandler) UpsertUserRole(w http.ResponseWriter, r *http.Request) {
 	userID := r.PathValue("userID")
-	namespace := r.PathValue("namespace")
+	workspace := r.PathValue("workspace")
 
 	var body struct {
 		RoleMask domain.Role `json:"role_mask"`
@@ -62,7 +62,7 @@ func (h *AdminHandler) UpsertUserRole(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	ur, err := h.svc.UpsertUserRole(r.Context(), userID, namespace, body.RoleMask)
+	ur, err := h.svc.UpsertUserRole(r.Context(), userID, workspace, body.RoleMask)
 	if err != nil {
 		if errors.Is(err, service.ErrNotFound) {
 			WriteError(w, http.StatusNotFound, "NOT_FOUND", "user not found")
@@ -76,9 +76,9 @@ func (h *AdminHandler) UpsertUserRole(w http.ResponseWriter, r *http.Request) {
 
 func (h *AdminHandler) DeleteUserRole(w http.ResponseWriter, r *http.Request) {
 	userID := r.PathValue("userID")
-	namespace := r.PathValue("namespace")
+	workspace := r.PathValue("workspace")
 
-	if err := h.svc.DeleteUserRole(r.Context(), userID, namespace); err != nil {
+	if err := h.svc.DeleteUserRole(r.Context(), userID, workspace); err != nil {
 		if errors.Is(err, service.ErrNotFound) {
 			WriteError(w, http.StatusNotFound, "NOT_FOUND", "role not found")
 			return
@@ -90,11 +90,11 @@ func (h *AdminHandler) DeleteUserRole(w http.ResponseWriter, r *http.Request) {
 }
 
 // POST /v1/admin/keys
-// Body: { "name": "ci-pipeline", "namespace": "payments", "role": 2, "expires_in_days": 90 }
+// Body: { "name": "ci-pipeline", "workspace": "payments", "role": 2, "expires_in_days": 90 }
 func (h *AdminHandler) CreateAPIKey(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		Name          string      `json:"name"`
-		Namespace     string      `json:"namespace"`
+		Workspace     string      `json:"workspace"`
 		Role          domain.Role `json:"role"`
 		ExpiresInDays int         `json:"expires_in_days"`
 	}
@@ -102,12 +102,12 @@ func (h *AdminHandler) CreateAPIKey(w http.ResponseWriter, r *http.Request) {
 		WriteError(w, http.StatusBadRequest, "BAD_REQUEST", "invalid JSON body")
 		return
 	}
-	if body.Name == "" || body.Namespace == "" {
-		WriteError(w, http.StatusBadRequest, "BAD_REQUEST", "name and namespace are required")
+	if body.Name == "" || body.Workspace == "" {
+		WriteError(w, http.StatusBadRequest, "BAD_REQUEST", "name and workspace are required")
 		return
 	}
 
-	created, err := h.svc.CreateAPIKey(r.Context(), body.Name, body.Namespace, body.Role, body.ExpiresInDays)
+	created, err := h.svc.CreateAPIKey(r.Context(), body.Name, body.Workspace, body.Role, body.ExpiresInDays)
 	if err != nil {
 		WriteError(w, http.StatusInternalServerError, "INTERNAL", "failed to create key")
 		return
@@ -118,7 +118,7 @@ func (h *AdminHandler) CreateAPIKey(w http.ResponseWriter, r *http.Request) {
 		"id":         created.ID,
 		"key":        created.RawKey,
 		"name":       created.Name,
-		"namespace":  created.Namespace,
+		"workspace":  created.Workspace,
 		"role":       created.Role,
 		"created_at": created.CreatedAt,
 		"expires_at": created.ExpiresAt,

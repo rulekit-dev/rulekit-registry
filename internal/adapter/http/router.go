@@ -19,7 +19,7 @@ type storePort interface {
 	GetAPIKeyByHash(ctx context.Context, hash string) (*domain.APIKey, error)
 }
 
-func NewRouter(h *handler.RulesetHandler, auth *handler.AuthHandler, admin *handler.AdminHandler, db storePort, cfg *config.Config, startTime time.Time) http.Handler {
+func NewRouter(h *handler.RulesetHandler, auth *handler.AuthHandler, admin *handler.AdminHandler, ws *handler.WorkspaceHandler, db storePort, cfg *config.Config, startTime time.Time) http.Handler {
 	mux := http.NewServeMux()
 	secret := []byte(cfg.JWTSecret)
 
@@ -29,8 +29,14 @@ func NewRouter(h *handler.RulesetHandler, auth *handler.AuthHandler, admin *hand
 	mux.HandleFunc("POST /v1/auth/refresh", auth.Refresh)
 	mux.Handle("POST /v1/auth/logout", apiTokenMiddleware(db, secret, http.HandlerFunc(auth.Logout)))
 
-	// Ruleset API: viewer+ for reads, editor+ for writes.
+	// Workspace API: admin for writes, viewer+ for reads.
 	v1 := http.NewServeMux()
+	v1.Handle("GET /v1/workspaces", requireRole(domain.RoleViewer, http.HandlerFunc(ws.ListWorkspaces)))
+	v1.Handle("POST /v1/workspaces", requireAdmin(http.HandlerFunc(ws.CreateWorkspace)))
+	v1.Handle("GET /v1/workspaces/{workspace}", requireRole(domain.RoleViewer, http.HandlerFunc(ws.GetWorkspace)))
+	v1.Handle("DELETE /v1/workspaces/{workspace}", requireAdmin(http.HandlerFunc(ws.DeleteWorkspace)))
+
+	// Ruleset API: viewer+ for reads, editor+ for writes.
 	v1.Handle("GET /v1/rulesets", requireRole(domain.RoleViewer, http.HandlerFunc(h.ListRulesets)))
 	v1.Handle("POST /v1/rulesets", requireRole(domain.RoleEditor, http.HandlerFunc(h.CreateRuleset)))
 	v1.Handle("GET /v1/rulesets/{key}", requireRole(domain.RoleViewer, http.HandlerFunc(h.GetRuleset)))
@@ -49,8 +55,8 @@ func NewRouter(h *handler.RulesetHandler, auth *handler.AuthHandler, admin *hand
 	v1.Handle("GET /v1/admin/users", requireAdmin(http.HandlerFunc(admin.ListUsers)))
 	v1.Handle("DELETE /v1/admin/users/{userID}", requireAdmin(http.HandlerFunc(admin.DeleteUser)))
 	v1.Handle("GET /v1/admin/users/{userID}/roles", requireAdmin(http.HandlerFunc(admin.ListUserRoles)))
-	v1.Handle("PUT /v1/admin/users/{userID}/roles/{namespace}", requireAdmin(http.HandlerFunc(admin.UpsertUserRole)))
-	v1.Handle("DELETE /v1/admin/users/{userID}/roles/{namespace}", requireAdmin(http.HandlerFunc(admin.DeleteUserRole)))
+	v1.Handle("PUT /v1/admin/users/{userID}/roles/{workspace}", requireAdmin(http.HandlerFunc(admin.UpsertUserRole)))
+	v1.Handle("DELETE /v1/admin/users/{userID}/roles/{workspace}", requireAdmin(http.HandlerFunc(admin.DeleteUserRole)))
 	v1.Handle("POST /v1/admin/keys", requireAdmin(http.HandlerFunc(admin.CreateAPIKey)))
 	v1.Handle("GET /v1/admin/keys", requireAdmin(http.HandlerFunc(admin.ListAPIKeys)))
 	v1.Handle("DELETE /v1/admin/keys/{keyID}", requireAdmin(http.HandlerFunc(admin.RevokeAPIKey)))

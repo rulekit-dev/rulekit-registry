@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"log/slog"
 	"math/big"
 	"strings"
 	"time"
@@ -61,14 +62,17 @@ func (s *AuthService) Login(ctx context.Context, email string) error {
 		}
 		user.LastLoginAt = user.CreatedAt
 		if createErr := s.db.CreateUser(ctx, user); createErr != nil {
+			slog.ErrorContext(ctx, "login: create user", "email", email, "error", createErr)
 			return fmt.Errorf("create user: %w", createErr)
 		}
 	} else if err != nil {
+		slog.ErrorContext(ctx, "login: look up user", "email", email, "error", err)
 		return fmt.Errorf("look up user: %w", err)
 	}
 
 	code, err := generateOTP(otpLength)
 	if err != nil {
+		slog.ErrorContext(ctx, "login: generate OTP", "email", email, "error", err)
 		return fmt.Errorf("generate OTP: %w", err)
 	}
 
@@ -79,6 +83,7 @@ func (s *AuthService) Login(ctx context.Context, email string) error {
 		ExpiresAt: time.Now().Add(otpTTL).UTC(),
 	}
 	if err := s.db.CreateOTPCode(ctx, otp); err != nil {
+		slog.ErrorContext(ctx, "login: store OTP", "email", email, "error", err)
 		return fmt.Errorf("store OTP: %w", err)
 	}
 
@@ -101,6 +106,7 @@ func (s *AuthService) Verify(ctx context.Context, email, code string) (*TokenPai
 		return nil, ErrInvalidCode
 	}
 	if err != nil {
+		slog.ErrorContext(ctx, "verify: look up user", "email", email, "error", err)
 		return nil, fmt.Errorf("look up user: %w", err)
 	}
 
@@ -109,6 +115,7 @@ func (s *AuthService) Verify(ctx context.Context, email, code string) (*TokenPai
 		return nil, ErrInvalidCode
 	}
 	if err != nil {
+		slog.ErrorContext(ctx, "verify: look up OTP", "user_id", user.ID, "error", err)
 		return nil, fmt.Errorf("look up OTP: %w", err)
 	}
 
@@ -117,24 +124,29 @@ func (s *AuthService) Verify(ctx context.Context, email, code string) (*TokenPai
 	}
 
 	if err := s.db.MarkOTPUsed(ctx, otp.ID); err != nil {
+		slog.ErrorContext(ctx, "verify: consume OTP", "user_id", user.ID, "error", err)
 		return nil, fmt.Errorf("consume OTP: %w", err)
 	}
 	if err := s.db.UpdateUserLastLogin(ctx, user.ID); err != nil {
+		slog.ErrorContext(ctx, "verify: update last login", "user_id", user.ID, "error", err)
 		return nil, fmt.Errorf("update last login: %w", err)
 	}
 
 	roles, err := s.db.ListUserRoles(ctx, user.ID)
 	if err != nil {
+		slog.ErrorContext(ctx, "verify: load roles", "user_id", user.ID, "error", err)
 		return nil, fmt.Errorf("load roles: %w", err)
 	}
 
 	accessToken, err := util.SignAccessToken(s.jwtSecret, user, roles)
 	if err != nil {
+		slog.ErrorContext(ctx, "verify: issue access token", "user_id", user.ID, "error", err)
 		return nil, fmt.Errorf("issue access token: %w", err)
 	}
 
 	rawRefresh, refreshHash, err := generateRefreshToken()
 	if err != nil {
+		slog.ErrorContext(ctx, "verify: generate refresh token", "user_id", user.ID, "error", err)
 		return nil, fmt.Errorf("generate refresh token: %w", err)
 	}
 
@@ -146,6 +158,7 @@ func (s *AuthService) Verify(ctx context.Context, email, code string) (*TokenPai
 		ExpiresAt: exp,
 	}
 	if err := s.db.CreateRefreshToken(ctx, rt); err != nil {
+		slog.ErrorContext(ctx, "verify: store refresh token", "user_id", user.ID, "error", err)
 		return nil, fmt.Errorf("store refresh token: %w", err)
 	}
 
@@ -160,6 +173,7 @@ func (s *AuthService) Refresh(ctx context.Context, rawRefreshToken string) (*Tok
 		return nil, ErrInvalidToken
 	}
 	if err != nil {
+		slog.ErrorContext(ctx, "refresh: look up token", "error", err)
 		return nil, fmt.Errorf("look up token: %w", err)
 	}
 
@@ -172,25 +186,30 @@ func (s *AuthService) Refresh(ctx context.Context, rawRefreshToken string) (*Tok
 
 	user, err := s.db.GetUserByID(ctx, rt.UserID)
 	if err != nil {
+		slog.ErrorContext(ctx, "refresh: load user", "user_id", rt.UserID, "error", err)
 		return nil, fmt.Errorf("load user: %w", err)
 	}
 
 	roles, err := s.db.ListUserRoles(ctx, user.ID)
 	if err != nil {
+		slog.ErrorContext(ctx, "refresh: load roles", "user_id", user.ID, "error", err)
 		return nil, fmt.Errorf("load roles: %w", err)
 	}
 
 	accessToken, err := util.SignAccessToken(s.jwtSecret, user, roles)
 	if err != nil {
+		slog.ErrorContext(ctx, "refresh: issue access token", "user_id", user.ID, "error", err)
 		return nil, fmt.Errorf("issue access token: %w", err)
 	}
 
 	if err := s.db.RevokeRefreshToken(ctx, rt.ID); err != nil {
+		slog.ErrorContext(ctx, "refresh: rotate refresh token", "user_id", user.ID, "error", err)
 		return nil, fmt.Errorf("rotate refresh token: %w", err)
 	}
 
 	newRawRefresh, newRefreshHash, err := generateRefreshToken()
 	if err != nil {
+		slog.ErrorContext(ctx, "refresh: generate new refresh token", "user_id", user.ID, "error", err)
 		return nil, fmt.Errorf("generate refresh token: %w", err)
 	}
 
@@ -202,6 +221,7 @@ func (s *AuthService) Refresh(ctx context.Context, rawRefreshToken string) (*Tok
 		ExpiresAt: exp,
 	}
 	if err := s.db.CreateRefreshToken(ctx, newRT); err != nil {
+		slog.ErrorContext(ctx, "refresh: store new refresh token", "user_id", user.ID, "error", err)
 		return nil, fmt.Errorf("store refresh token: %w", err)
 	}
 

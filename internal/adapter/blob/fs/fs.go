@@ -21,12 +21,12 @@ func New(baseDir string) (*FSBlobStore, error) {
 	return &FSBlobStore{baseDir: baseDir}, nil
 }
 
-func (b *FSBlobStore) dslPath(namespace, key string, version int) string {
-	return filepath.Join(b.baseDir, namespace, key, fmt.Sprintf("v%d", version), "dsl.json")
+func (b *FSBlobStore) dslPath(workspace, key string, version int) string {
+	return filepath.Join(b.baseDir, workspace, key, fmt.Sprintf("v%d", version), "dsl.json")
 }
 
-func (b *FSBlobStore) bundlePath(namespace, key string, version int) string {
-	return filepath.Join(b.baseDir, namespace, key, fmt.Sprintf("v%d", version), "bundle.zip")
+func (b *FSBlobStore) bundlePath(workspace, key string, version int) string {
+	return filepath.Join(b.baseDir, workspace, key, fmt.Sprintf("v%d", version), "bundle.zip")
 }
 
 func (b *FSBlobStore) put(path string, data []byte) error {
@@ -77,28 +77,28 @@ func (b *FSBlobStore) get(path string) ([]byte, error) {
 	return data, nil
 }
 
-func (b *FSBlobStore) PutDSL(ctx context.Context, namespace, key string, version int, data []byte) error {
-	return b.put(b.dslPath(namespace, key, version), data)
+func (b *FSBlobStore) PutDSL(ctx context.Context, workspace, key string, version int, data []byte) error {
+	return b.put(b.dslPath(workspace, key, version), data)
 }
 
-func (b *FSBlobStore) GetDSL(ctx context.Context, namespace, key string, version int) ([]byte, error) {
-	return b.get(b.dslPath(namespace, key, version))
+func (b *FSBlobStore) GetDSL(ctx context.Context, workspace, key string, version int) ([]byte, error) {
+	return b.get(b.dslPath(workspace, key, version))
 }
 
-func (b *FSBlobStore) DeleteDSL(ctx context.Context, namespace, key string, version int) error {
-	return b.delete(b.dslPath(namespace, key, version))
+func (b *FSBlobStore) DeleteDSL(ctx context.Context, workspace, key string, version int) error {
+	return b.delete(b.dslPath(workspace, key, version))
 }
 
-func (b *FSBlobStore) PutBundle(ctx context.Context, namespace, key string, version int, data []byte) error {
-	return b.put(b.bundlePath(namespace, key, version), data)
+func (b *FSBlobStore) PutBundle(ctx context.Context, workspace, key string, version int, data []byte) error {
+	return b.put(b.bundlePath(workspace, key, version), data)
 }
 
-func (b *FSBlobStore) GetBundle(ctx context.Context, namespace, key string, version int) ([]byte, error) {
-	return b.get(b.bundlePath(namespace, key, version))
+func (b *FSBlobStore) GetBundle(ctx context.Context, workspace, key string, version int) ([]byte, error) {
+	return b.get(b.bundlePath(workspace, key, version))
 }
 
-func (b *FSBlobStore) DeleteBundle(ctx context.Context, namespace, key string, version int) error {
-	return b.delete(b.bundlePath(namespace, key, version))
+func (b *FSBlobStore) DeleteBundle(ctx context.Context, workspace, key string, version int) error {
+	return b.delete(b.bundlePath(workspace, key, version))
 }
 
 func (b *FSBlobStore) Close() error { return nil }

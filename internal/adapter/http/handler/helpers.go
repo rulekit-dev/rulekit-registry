@@ -16,7 +16,7 @@ func ValidKey(s string) bool {
 	return len(s) > 0 && len(s) <= 128 && identPattern.MatchString(s)
 }
 
-func ValidNamespace(s string) bool {
+func ValidWorkspace(s string) bool {
 	return len(s) > 0 && len(s) <= 128 && identPattern.MatchString(s)
 }
 
@@ -32,17 +32,17 @@ func WriteError(w http.ResponseWriter, status int, code, message string) {
 	})
 }
 
-func NamespaceParam(w http.ResponseWriter, r *http.Request) (string, bool) {
-	ns := r.URL.Query().Get("namespace")
-	if ns == "" {
+func WorkspaceParam(w http.ResponseWriter, r *http.Request) (string, bool) {
+	ws := r.URL.Query().Get("workspace")
+	if ws == "" {
 		return "default", true
 	}
-	if !ValidNamespace(ns) {
-		WriteError(w, http.StatusBadRequest, "INVALID_NAMESPACE",
-			"namespace must be non-empty, at most 128 characters, and match [a-z0-9_-]")
+	if !ValidWorkspace(ws) {
+		WriteError(w, http.StatusBadRequest, "INVALID_WORKSPACE",
+			"workspace must be non-empty, at most 128 characters, and match [a-z0-9_-]")
 		return "", false
 	}
-	return ns, true
+	return ws, true
 }
 
 func PageParams(r *http.Request) (limit, offset int) {

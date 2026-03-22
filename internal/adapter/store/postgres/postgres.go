@@ -15,29 +15,34 @@ import (
 )
 
 const schema = `
+CREATE TABLE IF NOT EXISTS workspaces (
+    name        TEXT        NOT NULL PRIMARY KEY,
+    description TEXT        NOT NULL DEFAULT '',
+    created_at  TIMESTAMPTZ NOT NULL
+);
 CREATE TABLE IF NOT EXISTS rulesets (
-    namespace   TEXT        NOT NULL,
+    workspace   TEXT        NOT NULL,
     key         TEXT        NOT NULL,
     name        TEXT        NOT NULL,
     description TEXT        NOT NULL DEFAULT '',
     created_at  TIMESTAMPTZ NOT NULL,
     updated_at  TIMESTAMPTZ NOT NULL,
-    PRIMARY KEY (namespace, key)
+    PRIMARY KEY (workspace, key)
 );
 CREATE TABLE IF NOT EXISTS drafts (
-    namespace   TEXT        NOT NULL,
+    workspace   TEXT        NOT NULL,
     ruleset_key TEXT        NOT NULL,
     dsl         JSONB       NOT NULL,
     updated_at  TIMESTAMPTZ NOT NULL,
-    PRIMARY KEY (namespace, ruleset_key)
+    PRIMARY KEY (workspace, ruleset_key)
 );
 CREATE TABLE IF NOT EXISTS versions (
-    namespace   TEXT        NOT NULL,
+    workspace   TEXT        NOT NULL,
     ruleset_key TEXT        NOT NULL,
     version     INTEGER     NOT NULL,
     checksum    TEXT        NOT NULL,
     created_at  TIMESTAMPTZ NOT NULL,
-    PRIMARY KEY (namespace, ruleset_key, version)
+    PRIMARY KEY (workspace, ruleset_key, version)
 );
 CREATE TABLE IF NOT EXISTS users (
     id            TEXT        NOT NULL PRIMARY KEY,
@@ -65,7 +70,7 @@ CREATE TABLE IF NOT EXISTS api_keys (
     id         TEXT        NOT NULL PRIMARY KEY,
     name       TEXT        NOT NULL,
     key_hash   TEXT        NOT NULL UNIQUE,
-    namespace  TEXT        NOT NULL,
+    workspace  TEXT        NOT NULL,
     role       INTEGER     NOT NULL,
     created_at TIMESTAMPTZ NOT NULL,
     expires_at TIMESTAMPTZ,
@@ -74,9 +79,9 @@ CREATE TABLE IF NOT EXISTS api_keys (
 CREATE INDEX IF NOT EXISTS idx_api_keys_key_hash ON api_keys(key_hash);
 CREATE TABLE IF NOT EXISTS user_roles (
     user_id   TEXT    NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    namespace TEXT    NOT NULL,
+    workspace TEXT    NOT NULL,
     role_mask INTEGER NOT NULL,
-    PRIMARY KEY (user_id, namespace)
+    PRIMARY KEY (user_id, workspace)
 );`
 
 type PostgresStore struct {
@@ -103,10 +108,72 @@ func (s *PostgresStore) Ping(ctx context.Context) error { return s.db.PingContex
 
 func (s *PostgresStore) Close() error { return s.db.Close() }
 
-func (s *PostgresStore) ListRulesets(ctx context.Context, namespace string, limit, offset int) ([]*domain.Ruleset, error) {
+// --- Workspace ---
+
+func (s *PostgresStore) CreateWorkspace(ctx context.Context, ws *domain.Workspace) error {
+	_, err := s.db.ExecContext(ctx,
+		`INSERT INTO workspaces (name, description, created_at) VALUES ($1, $2, $3)`,
+		ws.Name, ws.Description, ws.CreatedAt.UTC(),
+	)
+	if err != nil {
+		if isUniqueViolation(err) {
+			return port.ErrAlreadyExists
+		}
+		return err
+	}
+	return nil
+}
+
+func (s *PostgresStore) GetWorkspace(ctx context.Context, name string) (*domain.Workspace, error) {
+	ws := &domain.Workspace{}
+	err := s.db.QueryRowContext(ctx,
+		`SELECT name, description, created_at FROM workspaces WHERE name = $1`, name).
+		Scan(&ws.Name, &ws.Description, &ws.CreatedAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, port.ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	ws.CreatedAt = ws.CreatedAt.UTC()
+	return ws, nil
+}
+
+func (s *PostgresStore) ListWorkspaces(ctx context.Context, limit, offset int) ([]*domain.Workspace, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT namespace, key, name, description, created_at, updated_at
-         FROM rulesets WHERE namespace = $1 ORDER BY key LIMIT $2 OFFSET $3`, namespace, limit, offset)
+		`SELECT name, description, created_at FROM workspaces ORDER BY name LIMIT $1 OFFSET $2`, limit, offset)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []*domain.Workspace
+	for rows.Next() {
+		ws := &domain.Workspace{}
+		if err := rows.Scan(&ws.Name, &ws.Description, &ws.CreatedAt); err != nil {
+			return nil, err
+		}
+		ws.CreatedAt = ws.CreatedAt.UTC()
+		out = append(out, ws)
+	}
+	return out, rows.Err()
+}
+
+func (s *PostgresStore) DeleteWorkspace(ctx context.Context, name string) error {
+	res, err := s.db.ExecContext(ctx, `DELETE FROM workspaces WHERE name = $1`, name)
+	if err != nil {
+		return err
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return port.ErrNotFound
+	}
+	return nil
+}
+
+func (s *PostgresStore) ListRulesets(ctx context.Context, workspace string, limit, offset int) ([]*domain.Ruleset, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT workspace, key, name, description, created_at, updated_at
+         FROM rulesets WHERE workspace = $1 ORDER BY key LIMIT $2 OFFSET $3`, workspace, limit, offset)
 	if err != nil {
 		return nil, err
 	}
@@ -114,7 +181,7 @@ func (s *PostgresStore) ListRulesets(ctx context.Context, namespace string, limi
 	var out []*domain.Ruleset
 	for rows.Next() {
 		r := &domain.Ruleset{}
-		if err := rows.Scan(&r.Namespace, &r.Key, &r.Name, &r.Description, &r.CreatedAt, &r.UpdatedAt); err != nil {
+		if err := rows.Scan(&r.Workspace, &r.Key, &r.Name, &r.Description, &r.CreatedAt, &r.UpdatedAt); err != nil {
 			return nil, err
 		}
 		r.CreatedAt = r.CreatedAt.UTC()
@@ -126,9 +193,9 @@ func (s *PostgresStore) ListRulesets(ctx context.Context, namespace string, limi
 
 func (s *PostgresStore) CreateRuleset(ctx context.Context, r *domain.Ruleset) error {
 	_, err := s.db.ExecContext(ctx,
-		`INSERT INTO rulesets (namespace, key, name, description, created_at, updated_at)
+		`INSERT INTO rulesets (workspace, key, name, description, created_at, updated_at)
          VALUES ($1, $2, $3, $4, $5, $6)`,
-		r.Namespace, r.Key, r.Name, r.Description,
+		r.Workspace, r.Key, r.Name, r.Description,
 		r.CreatedAt.UTC(), r.UpdatedAt.UTC(),
 	)
 	if err != nil {
@@ -140,12 +207,12 @@ func (s *PostgresStore) CreateRuleset(ctx context.Context, r *domain.Ruleset) er
 	return nil
 }
 
-func (s *PostgresStore) GetRuleset(ctx context.Context, namespace, key string) (*domain.Ruleset, error) {
+func (s *PostgresStore) GetRuleset(ctx context.Context, workspace, key string) (*domain.Ruleset, error) {
 	r := &domain.Ruleset{}
 	err := s.db.QueryRowContext(ctx,
-		`SELECT namespace, key, name, description, created_at, updated_at
-         FROM rulesets WHERE namespace = $1 AND key = $2`, namespace, key).
-		Scan(&r.Namespace, &r.Key, &r.Name, &r.Description, &r.CreatedAt, &r.UpdatedAt)
+		`SELECT workspace, key, name, description, created_at, updated_at
+         FROM rulesets WHERE workspace = $1 AND key = $2`, workspace, key).
+		Scan(&r.Workspace, &r.Key, &r.Name, &r.Description, &r.CreatedAt, &r.UpdatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, port.ErrNotFound
 	}
@@ -157,13 +224,13 @@ func (s *PostgresStore) GetRuleset(ctx context.Context, namespace, key string) (
 	return r, nil
 }
 
-func (s *PostgresStore) GetDraft(ctx context.Context, namespace, key string) (*domain.Draft, error) {
+func (s *PostgresStore) GetDraft(ctx context.Context, workspace, key string) (*domain.Draft, error) {
 	d := &domain.Draft{}
 	var ua time.Time
 	err := s.db.QueryRowContext(ctx,
-		`SELECT namespace, ruleset_key, dsl, updated_at
-         FROM drafts WHERE namespace = $1 AND ruleset_key = $2`, namespace, key).
-		Scan(&d.Namespace, &d.RulesetKey, &d.DSL, &ua)
+		`SELECT workspace, ruleset_key, dsl, updated_at
+         FROM drafts WHERE workspace = $1 AND ruleset_key = $2`, workspace, key).
+		Scan(&d.Workspace, &d.RulesetKey, &d.DSL, &ua)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, port.ErrNotFound
 	}
@@ -176,18 +243,18 @@ func (s *PostgresStore) GetDraft(ctx context.Context, namespace, key string) (*d
 
 func (s *PostgresStore) UpsertDraft(ctx context.Context, d *domain.Draft) error {
 	_, err := s.db.ExecContext(ctx,
-		`INSERT INTO drafts (namespace, ruleset_key, dsl, updated_at)
+		`INSERT INTO drafts (workspace, ruleset_key, dsl, updated_at)
          VALUES ($1, $2, $3, $4)
-         ON CONFLICT (namespace, ruleset_key)
+         ON CONFLICT (workspace, ruleset_key)
          DO UPDATE SET dsl = EXCLUDED.dsl, updated_at = EXCLUDED.updated_at`,
-		d.Namespace, d.RulesetKey, d.DSL, d.UpdatedAt.UTC(),
+		d.Workspace, d.RulesetKey, d.DSL, d.UpdatedAt.UTC(),
 	)
 	return err
 }
 
-func (s *PostgresStore) DeleteDraft(ctx context.Context, namespace, key string) error {
+func (s *PostgresStore) DeleteDraft(ctx context.Context, workspace, key string) error {
 	res, err := s.db.ExecContext(ctx,
-		`DELETE FROM drafts WHERE namespace = $1 AND ruleset_key = $2`, namespace, key)
+		`DELETE FROM drafts WHERE workspace = $1 AND ruleset_key = $2`, workspace, key)
 	if err != nil {
 		return err
 	}
@@ -201,9 +268,9 @@ func (s *PostgresStore) DeleteDraft(ctx context.Context, namespace, key string) 
 	return nil
 }
 
-func (s *PostgresStore) DeleteRuleset(ctx context.Context, namespace, key string) error {
+func (s *PostgresStore) DeleteRuleset(ctx context.Context, workspace, key string) error {
 	res, err := s.db.ExecContext(ctx,
-		`DELETE FROM rulesets WHERE namespace = $1 AND key = $2`, namespace, key)
+		`DELETE FROM rulesets WHERE workspace = $1 AND key = $2`, workspace, key)
 	if err != nil {
 		return err
 	}
@@ -217,11 +284,11 @@ func (s *PostgresStore) DeleteRuleset(ctx context.Context, namespace, key string
 	return nil
 }
 
-func (s *PostgresStore) ListVersions(ctx context.Context, namespace, key string, limit, offset int) ([]*domain.Version, error) {
+func (s *PostgresStore) ListVersions(ctx context.Context, workspace, key string, limit, offset int) ([]*domain.Version, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT namespace, ruleset_key, version, checksum, created_at
-         FROM versions WHERE namespace = $1 AND ruleset_key = $2 ORDER BY version ASC LIMIT $3 OFFSET $4`,
-		namespace, key, limit, offset)
+		`SELECT workspace, ruleset_key, version, checksum, created_at
+         FROM versions WHERE workspace = $1 AND ruleset_key = $2 ORDER BY version ASC LIMIT $3 OFFSET $4`,
+		workspace, key, limit, offset)
 	if err != nil {
 		return nil, err
 	}
@@ -230,7 +297,7 @@ func (s *PostgresStore) ListVersions(ctx context.Context, namespace, key string,
 	for rows.Next() {
 		v := &domain.Version{}
 		var ca time.Time
-		if err := rows.Scan(&v.Namespace, &v.RulesetKey, &v.Version, &v.Checksum, &ca); err != nil {
+		if err := rows.Scan(&v.Workspace, &v.RulesetKey, &v.Version, &v.Checksum, &ca); err != nil {
 			return nil, err
 		}
 		v.CreatedAt = ca.UTC()
@@ -239,14 +306,14 @@ func (s *PostgresStore) ListVersions(ctx context.Context, namespace, key string,
 	return out, rows.Err()
 }
 
-func (s *PostgresStore) GetVersion(ctx context.Context, namespace, key string, version int) (*domain.Version, error) {
+func (s *PostgresStore) GetVersion(ctx context.Context, workspace, key string, version int) (*domain.Version, error) {
 	v := &domain.Version{}
 	var ca time.Time
 	err := s.db.QueryRowContext(ctx,
-		`SELECT namespace, ruleset_key, version, checksum, created_at
-         FROM versions WHERE namespace = $1 AND ruleset_key = $2 AND version = $3`,
-		namespace, key, version).
-		Scan(&v.Namespace, &v.RulesetKey, &v.Version, &v.Checksum, &ca)
+		`SELECT workspace, ruleset_key, version, checksum, created_at
+         FROM versions WHERE workspace = $1 AND ruleset_key = $2 AND version = $3`,
+		workspace, key, version).
+		Scan(&v.Workspace, &v.RulesetKey, &v.Version, &v.Checksum, &ca)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, port.ErrNotFound
 	}
@@ -257,14 +324,14 @@ func (s *PostgresStore) GetVersion(ctx context.Context, namespace, key string, v
 	return v, nil
 }
 
-func (s *PostgresStore) GetLatestVersion(ctx context.Context, namespace, key string) (*domain.Version, error) {
+func (s *PostgresStore) GetLatestVersion(ctx context.Context, workspace, key string) (*domain.Version, error) {
 	v := &domain.Version{}
 	var ca time.Time
 	err := s.db.QueryRowContext(ctx,
-		`SELECT namespace, ruleset_key, version, checksum, created_at
-         FROM versions WHERE namespace = $1 AND ruleset_key = $2
-         ORDER BY version DESC LIMIT 1`, namespace, key).
-		Scan(&v.Namespace, &v.RulesetKey, &v.Version, &v.Checksum, &ca)
+		`SELECT workspace, ruleset_key, version, checksum, created_at
+         FROM versions WHERE workspace = $1 AND ruleset_key = $2
+         ORDER BY version DESC LIMIT 1`, workspace, key).
+		Scan(&v.Workspace, &v.RulesetKey, &v.Version, &v.Checksum, &ca)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, port.ErrNotFound
 	}
@@ -284,8 +351,8 @@ func (s *PostgresStore) CreateVersion(ctx context.Context, v *domain.Version) er
 
 	var count int
 	if err := tx.QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM versions WHERE namespace = $1 AND ruleset_key = $2 AND version = $3`,
-		v.Namespace, v.RulesetKey, v.Version).Scan(&count); err != nil {
+		`SELECT COUNT(*) FROM versions WHERE workspace = $1 AND ruleset_key = $2 AND version = $3`,
+		v.Workspace, v.RulesetKey, v.Version).Scan(&count); err != nil {
 		return err
 	}
 	if count > 0 {
@@ -293,9 +360,9 @@ func (s *PostgresStore) CreateVersion(ctx context.Context, v *domain.Version) er
 	}
 
 	if _, err := tx.ExecContext(ctx,
-		`INSERT INTO versions (namespace, ruleset_key, version, checksum, created_at)
+		`INSERT INTO versions (workspace, ruleset_key, version, checksum, created_at)
          VALUES ($1, $2, $3, $4, $5)`,
-		v.Namespace, v.RulesetKey, v.Version, v.Checksum,
+		v.Workspace, v.RulesetKey, v.Version, v.Checksum,
 		v.CreatedAt.UTC(),
 	); err != nil {
 		return err
@@ -303,11 +370,11 @@ func (s *PostgresStore) CreateVersion(ctx context.Context, v *domain.Version) er
 	return tx.Commit()
 }
 
-func (s *PostgresStore) NextVersionNumber(ctx context.Context, namespace, key string) (int, error) {
+func (s *PostgresStore) NextVersionNumber(ctx context.Context, workspace, key string) (int, error) {
 	var maxVer sql.NullInt64
 	err := s.db.QueryRowContext(ctx,
-		`SELECT MAX(version) FROM versions WHERE namespace = $1 AND ruleset_key = $2`,
-		namespace, key).Scan(&maxVer)
+		`SELECT MAX(version) FROM versions WHERE workspace = $1 AND ruleset_key = $2`,
+		workspace, key).Scan(&maxVer)
 	if err != nil {
 		return 0, err
 	}
@@ -492,9 +559,9 @@ func (s *PostgresStore) CreateAPIKey(ctx context.Context, k *domain.APIKey) erro
 		exp = k.ExpiresAt.UTC()
 	}
 	_, err := s.db.ExecContext(ctx,
-		`INSERT INTO api_keys (id, name, key_hash, namespace, role, created_at, expires_at)
+		`INSERT INTO api_keys (id, name, key_hash, workspace, role, created_at, expires_at)
          VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-		k.ID, k.Name, k.KeyHash, k.Namespace, int(k.Role), k.CreatedAt.UTC(), exp)
+		k.ID, k.Name, k.KeyHash, k.Workspace, int(k.Role), k.CreatedAt.UTC(), exp)
 	if err != nil {
 		if isUniqueViolation(err) {
 			return port.ErrAlreadyExists
@@ -509,9 +576,9 @@ func (s *PostgresStore) GetAPIKeyByHash(ctx context.Context, keyHash string) (*d
 	var role int
 	var exp, rev sql.NullTime
 	err := s.db.QueryRowContext(ctx,
-		`SELECT id, name, key_hash, namespace, role, created_at, expires_at, revoked_at
+		`SELECT id, name, key_hash, workspace, role, created_at, expires_at, revoked_at
          FROM api_keys WHERE key_hash = $1`, keyHash).
-		Scan(&k.ID, &k.Name, &k.KeyHash, &k.Namespace, &role, &k.CreatedAt, &exp, &rev)
+		Scan(&k.ID, &k.Name, &k.KeyHash, &k.Workspace, &role, &k.CreatedAt, &exp, &rev)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, port.ErrNotFound
 	}
@@ -533,7 +600,7 @@ func (s *PostgresStore) GetAPIKeyByHash(ctx context.Context, keyHash string) (*d
 
 func (s *PostgresStore) ListAPIKeys(ctx context.Context, limit, offset int) ([]*domain.APIKey, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT id, name, key_hash, namespace, role, created_at, expires_at, revoked_at
+		`SELECT id, name, key_hash, workspace, role, created_at, expires_at, revoked_at
          FROM api_keys ORDER BY created_at DESC LIMIT $1 OFFSET $2`, limit, offset)
 	if err != nil {
 		return nil, err
@@ -544,7 +611,7 @@ func (s *PostgresStore) ListAPIKeys(ctx context.Context, limit, offset int) ([]*
 		k := &domain.APIKey{}
 		var role int
 		var exp, rev sql.NullTime
-		if err := rows.Scan(&k.ID, &k.Name, &k.KeyHash, &k.Namespace, &role, &k.CreatedAt, &exp, &rev); err != nil {
+		if err := rows.Scan(&k.ID, &k.Name, &k.KeyHash, &k.Workspace, &role, &k.CreatedAt, &exp, &rev); err != nil {
 			return nil, err
 		}
 		k.Role = domain.Role(role)
@@ -580,18 +647,18 @@ func (s *PostgresStore) RevokeAPIKey(ctx context.Context, keyID string) error {
 
 func (s *PostgresStore) UpsertUserRole(ctx context.Context, ur *domain.UserRole) error {
 	_, err := s.db.ExecContext(ctx,
-		`INSERT INTO user_roles (user_id, namespace, role_mask) VALUES ($1, $2, $3)
-         ON CONFLICT (user_id, namespace) DO UPDATE SET role_mask = EXCLUDED.role_mask`,
-		ur.UserID, ur.Namespace, int(ur.RoleMask))
+		`INSERT INTO user_roles (user_id, workspace, role_mask) VALUES ($1, $2, $3)
+         ON CONFLICT (user_id, workspace) DO UPDATE SET role_mask = EXCLUDED.role_mask`,
+		ur.UserID, ur.Workspace, int(ur.RoleMask))
 	return err
 }
 
-func (s *PostgresStore) GetUserRole(ctx context.Context, userID, namespace string) (*domain.UserRole, error) {
+func (s *PostgresStore) GetUserRole(ctx context.Context, userID, workspace string) (*domain.UserRole, error) {
 	ur := &domain.UserRole{}
 	var mask int
 	err := s.db.QueryRowContext(ctx,
-		`SELECT user_id, namespace, role_mask FROM user_roles WHERE user_id = $1 AND namespace = $2`,
-		userID, namespace).Scan(&ur.UserID, &ur.Namespace, &mask)
+		`SELECT user_id, workspace, role_mask FROM user_roles WHERE user_id = $1 AND workspace = $2`,
+		userID, workspace).Scan(&ur.UserID, &ur.Workspace, &mask)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, port.ErrNotFound
 	}
@@ -604,7 +671,7 @@ func (s *PostgresStore) GetUserRole(ctx context.Context, userID, namespace strin
 
 func (s *PostgresStore) ListUserRoles(ctx context.Context, userID string) ([]*domain.UserRole, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT user_id, namespace, role_mask FROM user_roles WHERE user_id = $1`, userID)
+		`SELECT user_id, workspace, role_mask FROM user_roles WHERE user_id = $1`, userID)
 	if err != nil {
 		return nil, err
 	}
@@ -613,7 +680,7 @@ func (s *PostgresStore) ListUserRoles(ctx context.Context, userID string) ([]*do
 	for rows.Next() {
 		ur := &domain.UserRole{}
 		var mask int
-		if err := rows.Scan(&ur.UserID, &ur.Namespace, &mask); err != nil {
+		if err := rows.Scan(&ur.UserID, &ur.Workspace, &mask); err != nil {
 			return nil, err
 		}
 		ur.RoleMask = domain.Role(mask)
@@ -622,9 +689,9 @@ func (s *PostgresStore) ListUserRoles(ctx context.Context, userID string) ([]*do
 	return out, rows.Err()
 }
 
-func (s *PostgresStore) DeleteUserRole(ctx context.Context, userID, namespace string) error {
+func (s *PostgresStore) DeleteUserRole(ctx context.Context, userID, workspace string) error {
 	res, err := s.db.ExecContext(ctx,
-		`DELETE FROM user_roles WHERE user_id = $1 AND namespace = $2`, userID, namespace)
+		`DELETE FROM user_roles WHERE user_id = $1 AND workspace = $2`, userID, workspace)
 	if err != nil {
 		return err
 	}

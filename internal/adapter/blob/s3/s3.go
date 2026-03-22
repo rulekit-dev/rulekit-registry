@@ -72,12 +72,12 @@ func New(cfg Config) (*S3BlobStore, error) {
 	return &S3BlobStore{client: client, bucket: cfg.Bucket}, nil
 }
 
-func (b *S3BlobStore) dslKey(namespace, key string, version int) string {
-	return fmt.Sprintf("%s/%s/v%d/dsl.json", namespace, key, version)
+func (b *S3BlobStore) dslKey(workspace, key string, version int) string {
+	return fmt.Sprintf("%s/%s/v%d/dsl.json", workspace, key, version)
 }
 
-func (b *S3BlobStore) bundleKey(namespace, key string, version int) string {
-	return fmt.Sprintf("%s/%s/v%d/bundle.zip", namespace, key, version)
+func (b *S3BlobStore) bundleKey(workspace, key string, version int) string {
+	return fmt.Sprintf("%s/%s/v%d/bundle.zip", workspace, key, version)
 }
 
 func (b *S3BlobStore) put(ctx context.Context, objKey, contentType string, data []byte) error {
@@ -123,28 +123,28 @@ func (b *S3BlobStore) del(ctx context.Context, objKey string) error {
 	return nil
 }
 
-func (b *S3BlobStore) PutDSL(ctx context.Context, namespace, key string, version int, data []byte) error {
-	return b.put(ctx, b.dslKey(namespace, key, version), "application/json", data)
+func (b *S3BlobStore) PutDSL(ctx context.Context, workspace, key string, version int, data []byte) error {
+	return b.put(ctx, b.dslKey(workspace, key, version), "application/json", data)
 }
 
-func (b *S3BlobStore) GetDSL(ctx context.Context, namespace, key string, version int) ([]byte, error) {
-	return b.get(ctx, b.dslKey(namespace, key, version))
+func (b *S3BlobStore) GetDSL(ctx context.Context, workspace, key string, version int) ([]byte, error) {
+	return b.get(ctx, b.dslKey(workspace, key, version))
 }
 
-func (b *S3BlobStore) DeleteDSL(ctx context.Context, namespace, key string, version int) error {
-	return b.del(ctx, b.dslKey(namespace, key, version))
+func (b *S3BlobStore) DeleteDSL(ctx context.Context, workspace, key string, version int) error {
+	return b.del(ctx, b.dslKey(workspace, key, version))
 }
 
-func (b *S3BlobStore) PutBundle(ctx context.Context, namespace, key string, version int, data []byte) error {
-	return b.put(ctx, b.bundleKey(namespace, key, version), "application/zip", data)
+func (b *S3BlobStore) PutBundle(ctx context.Context, workspace, key string, version int, data []byte) error {
+	return b.put(ctx, b.bundleKey(workspace, key, version), "application/zip", data)
 }
 
-func (b *S3BlobStore) GetBundle(ctx context.Context, namespace, key string, version int) ([]byte, error) {
-	return b.get(ctx, b.bundleKey(namespace, key, version))
+func (b *S3BlobStore) GetBundle(ctx context.Context, workspace, key string, version int) ([]byte, error) {
+	return b.get(ctx, b.bundleKey(workspace, key, version))
 }
 
-func (b *S3BlobStore) DeleteBundle(ctx context.Context, namespace, key string, version int) error {
-	return b.del(ctx, b.bundleKey(namespace, key, version))
+func (b *S3BlobStore) DeleteBundle(ctx context.Context, workspace, key string, version int) error {
+	return b.del(ctx, b.bundleKey(workspace, key, version))
 }
 
 func (b *S3BlobStore) Close() error { return nil }

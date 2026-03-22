@@ -108,35 +108,35 @@ func RunSuite(t *testing.T, newStore func(t *testing.T) port.BlobStore) {
 		}
 	})
 
-	t.Run("NamespaceIsolation", func(t *testing.T) {
+	t.Run("WorkspaceIsolation", func(t *testing.T) {
 		t.Parallel()
 		b := newStore(t)
 		ctx := context.Background()
 
-		nsA := []byte(`{"ns":"a"}`)
-		nsB := []byte(`{"ns":"b"}`)
+		nsA := []byte(`{"workspace":"a"}`)
+		nsB := []byte(`{"workspace":"b"}`)
 
-		if err := b.PutDSL(ctx, "ns-a", "ruleset", 1, nsA); err != nil {
-			t.Fatalf("PutDSL ns-a: %v", err)
+		if err := b.PutDSL(ctx, "workspace-a", "ruleset", 1, nsA); err != nil {
+			t.Fatalf("PutDSL workspace-a: %v", err)
 		}
-		if err := b.PutDSL(ctx, "ns-b", "ruleset", 1, nsB); err != nil {
-			t.Fatalf("PutDSL ns-b: %v", err)
+		if err := b.PutDSL(ctx, "workspace-b", "ruleset", 1, nsB); err != nil {
+			t.Fatalf("PutDSL workspace-b: %v", err)
 		}
 
-		gotA, err := b.GetDSL(ctx, "ns-a", "ruleset", 1)
+		gotA, err := b.GetDSL(ctx, "workspace-a", "ruleset", 1)
 		if err != nil {
-			t.Fatalf("GetDSL ns-a: %v", err)
+			t.Fatalf("GetDSL workspace-a: %v", err)
 		}
 		if !bytes.Equal(gotA, nsA) {
-			t.Errorf("GetDSL ns-a: got %q, want %q", gotA, nsA)
+			t.Errorf("GetDSL workspace-a: got %q, want %q", gotA, nsA)
 		}
 
-		gotB, err := b.GetDSL(ctx, "ns-b", "ruleset", 1)
+		gotB, err := b.GetDSL(ctx, "workspace-b", "ruleset", 1)
 		if err != nil {
-			t.Fatalf("GetDSL ns-b: %v", err)
+			t.Fatalf("GetDSL workspace-b: %v", err)
 		}
 		if !bytes.Equal(gotB, nsB) {
-			t.Errorf("GetDSL ns-b: got %q, want %q", gotB, nsB)
+			t.Errorf("GetDSL workspace-b: got %q, want %q", gotB, nsB)
 		}
 	})
 

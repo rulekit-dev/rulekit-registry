@@ -23,8 +23,8 @@ type Claims struct {
 }
 
 type RoleClaim struct {
-	Namespace string      `json:"ns"`
-	RoleMask  domain.Role `json:"mask"`
+	Workspace string      `json:"workspace"`
+	Role      domain.Role `json:"role"`
 }
 
 func SignAccessToken(secret []byte, user *domain.User, roles []*domain.UserRole) (string, error) {
@@ -49,7 +49,7 @@ func SignAdminToken(secret []byte) (string, error) {
 			IssuedAt:  jwt.NewNumericDate(time.Now()),
 		},
 		Email: "admin",
-		Roles: []RoleClaim{{Namespace: "*", RoleMask: domain.RoleAdmin}},
+		Roles: []RoleClaim{{Workspace: "*", Role: domain.RoleAdmin}},
 	}
 	return signClaims(secret, claims)
 }
@@ -79,25 +79,25 @@ var (
 	ErrTokenInvalid = errors.New("token invalid")
 )
 
-// RoleForNamespace returns the effective role mask for a namespace.
-// A global role (namespace="*") supersedes namespace-specific roles.
-func (c *Claims) RoleForNamespace(namespace string) domain.Role {
-	var mask domain.Role
+// RoleForWorkspace returns the effective role for a workspace.
+// A global role (workspace="*") supersedes workspace-specific roles.
+func (c *Claims) RoleForWorkspace(workspace string) domain.Role {
+	var role domain.Role
 	for _, r := range c.Roles {
-		if r.Namespace == "*" {
-			return r.RoleMask
+		if r.Workspace == "*" {
+			return r.Role
 		}
-		if r.Namespace == namespace {
-			mask = r.RoleMask
+		if r.Workspace == workspace {
+			role = r.Role
 		}
 	}
-	return mask
+	return role
 }
 
 func toRoleClaims(roles []*domain.UserRole) []RoleClaim {
 	out := make([]RoleClaim, len(roles))
 	for i, r := range roles {
-		out[i] = RoleClaim{Namespace: r.Namespace, RoleMask: r.RoleMask}
+		out[i] = RoleClaim{Workspace: r.Workspace, Role: r.RoleMask}
 	}
 	return out
 }

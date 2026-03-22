@@ -14,23 +14,29 @@ var (
 )
 
 type Datastore interface {
+	// Workspace operations
+	CreateWorkspace(ctx context.Context, ws *domain.Workspace) error
+	GetWorkspace(ctx context.Context, name string) (*domain.Workspace, error)
+	ListWorkspaces(ctx context.Context, limit, offset int) ([]*domain.Workspace, error)
+	DeleteWorkspace(ctx context.Context, name string) error
+
 	// Ruleset operations
-	ListRulesets(ctx context.Context, namespace string, limit, offset int) ([]*domain.Ruleset, error)
+	ListRulesets(ctx context.Context, workspace string, limit, offset int) ([]*domain.Ruleset, error)
 	CreateRuleset(ctx context.Context, r *domain.Ruleset) error
-	GetRuleset(ctx context.Context, namespace, key string) (*domain.Ruleset, error)
-	DeleteRuleset(ctx context.Context, namespace, key string) error
+	GetRuleset(ctx context.Context, workspace, key string) (*domain.Ruleset, error)
+	DeleteRuleset(ctx context.Context, workspace, key string) error
 
 	// Draft operations
-	GetDraft(ctx context.Context, namespace, key string) (*domain.Draft, error)
+	GetDraft(ctx context.Context, workspace, key string) (*domain.Draft, error)
 	UpsertDraft(ctx context.Context, d *domain.Draft) error
-	DeleteDraft(ctx context.Context, namespace, key string) error
+	DeleteDraft(ctx context.Context, workspace, key string) error
 
 	// Version operations
-	ListVersions(ctx context.Context, namespace, key string, limit, offset int) ([]*domain.Version, error)
-	GetVersion(ctx context.Context, namespace, key string, version int) (*domain.Version, error)
-	GetLatestVersion(ctx context.Context, namespace, key string) (*domain.Version, error)
+	ListVersions(ctx context.Context, workspace, key string, limit, offset int) ([]*domain.Version, error)
+	GetVersion(ctx context.Context, workspace, key string, version int) (*domain.Version, error)
+	GetLatestVersion(ctx context.Context, workspace, key string) (*domain.Version, error)
 	CreateVersion(ctx context.Context, v *domain.Version) error
-	NextVersionNumber(ctx context.Context, namespace, key string) (int, error)
+	NextVersionNumber(ctx context.Context, workspace, key string) (int, error)
 
 	// User operations
 	CreateUser(ctx context.Context, u *domain.User) error
@@ -59,9 +65,9 @@ type Datastore interface {
 
 	// User role operations
 	UpsertUserRole(ctx context.Context, ur *domain.UserRole) error
-	GetUserRole(ctx context.Context, userID, namespace string) (*domain.UserRole, error)
+	GetUserRole(ctx context.Context, userID, workspace string) (*domain.UserRole, error)
 	ListUserRoles(ctx context.Context, userID string) ([]*domain.UserRole, error)
-	DeleteUserRole(ctx context.Context, userID, namespace string) error
+	DeleteUserRole(ctx context.Context, userID, workspace string) error
 
 	Ping(ctx context.Context) error
 	Close() error

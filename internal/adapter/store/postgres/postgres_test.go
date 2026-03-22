@@ -16,7 +16,7 @@ func TestPostgres(t *testing.T) {
 	}
 
 	// Open and migrate once; each subtest gets the same store.
-	// Data isolation is guaranteed by unique namespaces in the shared suite.
+	// Data isolation is guaranteed by unique workspace in the shared suite.
 	shared, err := postgres.New(dsn)
 	if err != nil {
 		t.Fatalf("postgres.New: %v", err)

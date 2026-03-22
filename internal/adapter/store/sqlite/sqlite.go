@@ -17,29 +17,34 @@ import (
 )
 
 const schema = `
+CREATE TABLE IF NOT EXISTS workspaces (
+    name        TEXT NOT NULL PRIMARY KEY,
+    description TEXT NOT NULL DEFAULT '',
+    created_at  TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS rulesets (
-    namespace   TEXT NOT NULL,
+    workspace   TEXT NOT NULL,
     key         TEXT NOT NULL,
     name        TEXT NOT NULL,
     description TEXT NOT NULL DEFAULT '',
     created_at  TEXT NOT NULL,
     updated_at  TEXT NOT NULL,
-    PRIMARY KEY (namespace, key)
+    PRIMARY KEY (workspace, key)
 );
 CREATE TABLE IF NOT EXISTS drafts (
-    namespace   TEXT NOT NULL,
+    workspace   TEXT NOT NULL,
     ruleset_key TEXT NOT NULL,
     dsl         TEXT NOT NULL,
     updated_at  TEXT NOT NULL,
-    PRIMARY KEY (namespace, ruleset_key)
+    PRIMARY KEY (workspace, ruleset_key)
 );
 CREATE TABLE IF NOT EXISTS versions (
-    namespace   TEXT NOT NULL,
+    workspace   TEXT NOT NULL,
     ruleset_key TEXT NOT NULL,
     version     INTEGER NOT NULL,
     checksum    TEXT NOT NULL,
     created_at  TEXT NOT NULL,
-    PRIMARY KEY (namespace, ruleset_key, version)
+    PRIMARY KEY (workspace, ruleset_key, version)
 );
 CREATE TABLE IF NOT EXISTS users (
     id            TEXT NOT NULL PRIMARY KEY,
@@ -67,7 +72,7 @@ CREATE TABLE IF NOT EXISTS api_keys (
     id         TEXT NOT NULL PRIMARY KEY,
     name       TEXT NOT NULL,
     key_hash   TEXT NOT NULL UNIQUE,
-    namespace  TEXT NOT NULL,
+    workspace  TEXT NOT NULL,
     role       INTEGER NOT NULL,
     created_at TEXT NOT NULL,
     expires_at TEXT,
@@ -76,9 +81,9 @@ CREATE TABLE IF NOT EXISTS api_keys (
 CREATE INDEX IF NOT EXISTS idx_api_keys_key_hash ON api_keys(key_hash);
 CREATE TABLE IF NOT EXISTS user_roles (
     user_id   TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    namespace TEXT NOT NULL,
+    workspace TEXT NOT NULL,
     role_mask INTEGER NOT NULL,
-    PRIMARY KEY (user_id, namespace)
+    PRIMARY KEY (user_id, workspace)
 );`
 
 type SQLiteStore struct {
@@ -106,10 +111,74 @@ func (s *SQLiteStore) Ping(ctx context.Context) error { return s.db.PingContext(
 
 func (s *SQLiteStore) Close() error { return s.db.Close() }
 
-func (s *SQLiteStore) ListRulesets(ctx context.Context, namespace string, limit, offset int) ([]*domain.Ruleset, error) {
+// --- Workspace ---
+
+func (s *SQLiteStore) CreateWorkspace(ctx context.Context, ws *domain.Workspace) error {
+	_, err := s.db.ExecContext(ctx,
+		`INSERT INTO workspaces (name, description, created_at) VALUES (?, ?, ?)`,
+		ws.Name, ws.Description, ws.CreatedAt.UTC().Format(time.RFC3339Nano),
+	)
+	if err != nil {
+		if isUniqueConstraint(err) {
+			return port.ErrAlreadyExists
+		}
+		return err
+	}
+	return nil
+}
+
+func (s *SQLiteStore) GetWorkspace(ctx context.Context, name string) (*domain.Workspace, error) {
+	ws := &domain.Workspace{}
+	var ca string
+	err := s.db.QueryRowContext(ctx,
+		`SELECT name, description, created_at FROM workspaces WHERE name = ?`, name).
+		Scan(&ws.Name, &ws.Description, &ca)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, port.ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	ws.CreatedAt, _ = time.Parse(time.RFC3339Nano, ca)
+	return ws, nil
+}
+
+func (s *SQLiteStore) ListWorkspaces(ctx context.Context, limit, offset int) ([]*domain.Workspace, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT namespace, key, name, description, created_at, updated_at
-         FROM rulesets WHERE namespace = ? ORDER BY key LIMIT ? OFFSET ?`, namespace, limit, offset)
+		`SELECT name, description, created_at FROM workspaces ORDER BY name LIMIT ? OFFSET ?`, limit, offset)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []*domain.Workspace
+	for rows.Next() {
+		ws := &domain.Workspace{}
+		var ca string
+		if err := rows.Scan(&ws.Name, &ws.Description, &ca); err != nil {
+			return nil, err
+		}
+		ws.CreatedAt, _ = time.Parse(time.RFC3339Nano, ca)
+		out = append(out, ws)
+	}
+	return out, rows.Err()
+}
+
+func (s *SQLiteStore) DeleteWorkspace(ctx context.Context, name string) error {
+	res, err := s.db.ExecContext(ctx, `DELETE FROM workspaces WHERE name = ?`, name)
+	if err != nil {
+		return err
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return port.ErrNotFound
+	}
+	return nil
+}
+
+func (s *SQLiteStore) ListRulesets(ctx context.Context, workspace string, limit, offset int) ([]*domain.Ruleset, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT workspace, key, name, description, created_at, updated_at
+         FROM rulesets WHERE workspace = ? ORDER BY key LIMIT ? OFFSET ?`, workspace, limit, offset)
 	if err != nil {
 		return nil, err
 	}
@@ -118,7 +187,7 @@ func (s *SQLiteStore) ListRulesets(ctx context.Context, namespace string, limit,
 	for rows.Next() {
 		r := &domain.Ruleset{}
 		var ca, ua string
-		if err := rows.Scan(&r.Namespace, &r.Key, &r.Name, &r.Description, &ca, &ua); err != nil {
+		if err := rows.Scan(&r.Workspace, &r.Key, &r.Name, &r.Description, &ca, &ua); err != nil {
 			return nil, err
 		}
 		r.CreatedAt, _ = time.Parse(time.RFC3339Nano, ca)
@@ -130,9 +199,9 @@ func (s *SQLiteStore) ListRulesets(ctx context.Context, namespace string, limit,
 
 func (s *SQLiteStore) CreateRuleset(ctx context.Context, r *domain.Ruleset) error {
 	_, err := s.db.ExecContext(ctx,
-		`INSERT INTO rulesets (namespace, key, name, description, created_at, updated_at)
+		`INSERT INTO rulesets (workspace, key, name, description, created_at, updated_at)
          VALUES (?, ?, ?, ?, ?, ?)`,
-		r.Namespace, r.Key, r.Name, r.Description,
+		r.Workspace, r.Key, r.Name, r.Description,
 		r.CreatedAt.UTC().Format(time.RFC3339Nano),
 		r.UpdatedAt.UTC().Format(time.RFC3339Nano),
 	)
@@ -145,13 +214,13 @@ func (s *SQLiteStore) CreateRuleset(ctx context.Context, r *domain.Ruleset) erro
 	return nil
 }
 
-func (s *SQLiteStore) GetRuleset(ctx context.Context, namespace, key string) (*domain.Ruleset, error) {
+func (s *SQLiteStore) GetRuleset(ctx context.Context, workspace, key string) (*domain.Ruleset, error) {
 	r := &domain.Ruleset{}
 	var ca, ua string
 	err := s.db.QueryRowContext(ctx,
-		`SELECT namespace, key, name, description, created_at, updated_at
-         FROM rulesets WHERE namespace = ? AND key = ?`, namespace, key).
-		Scan(&r.Namespace, &r.Key, &r.Name, &r.Description, &ca, &ua)
+		`SELECT workspace, key, name, description, created_at, updated_at
+         FROM rulesets WHERE workspace = ? AND key = ?`, workspace, key).
+		Scan(&r.Workspace, &r.Key, &r.Name, &r.Description, &ca, &ua)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, port.ErrNotFound
 	}
@@ -163,13 +232,13 @@ func (s *SQLiteStore) GetRuleset(ctx context.Context, namespace, key string) (*d
 	return r, nil
 }
 
-func (s *SQLiteStore) GetDraft(ctx context.Context, namespace, key string) (*domain.Draft, error) {
+func (s *SQLiteStore) GetDraft(ctx context.Context, workspace, key string) (*domain.Draft, error) {
 	d := &domain.Draft{}
 	var dslStr, ua string
 	err := s.db.QueryRowContext(ctx,
-		`SELECT namespace, ruleset_key, dsl, updated_at
-         FROM drafts WHERE namespace = ? AND ruleset_key = ?`, namespace, key).
-		Scan(&d.Namespace, &d.RulesetKey, &dslStr, &ua)
+		`SELECT workspace, ruleset_key, dsl, updated_at
+         FROM drafts WHERE workspace = ? AND ruleset_key = ?`, workspace, key).
+		Scan(&d.Workspace, &d.RulesetKey, &dslStr, &ua)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, port.ErrNotFound
 	}
@@ -183,17 +252,17 @@ func (s *SQLiteStore) GetDraft(ctx context.Context, namespace, key string) (*dom
 
 func (s *SQLiteStore) UpsertDraft(ctx context.Context, d *domain.Draft) error {
 	_, err := s.db.ExecContext(ctx,
-		`INSERT OR REPLACE INTO drafts (namespace, ruleset_key, dsl, updated_at)
+		`INSERT OR REPLACE INTO drafts (workspace, ruleset_key, dsl, updated_at)
          VALUES (?, ?, ?, ?)`,
-		d.Namespace, d.RulesetKey, string(d.DSL),
+		d.Workspace, d.RulesetKey, string(d.DSL),
 		d.UpdatedAt.UTC().Format(time.RFC3339Nano),
 	)
 	return err
 }
 
-func (s *SQLiteStore) DeleteDraft(ctx context.Context, namespace, key string) error {
+func (s *SQLiteStore) DeleteDraft(ctx context.Context, workspace, key string) error {
 	res, err := s.db.ExecContext(ctx,
-		`DELETE FROM drafts WHERE namespace = ? AND ruleset_key = ?`, namespace, key)
+		`DELETE FROM drafts WHERE workspace = ? AND ruleset_key = ?`, workspace, key)
 	if err != nil {
 		return err
 	}
@@ -207,9 +276,9 @@ func (s *SQLiteStore) DeleteDraft(ctx context.Context, namespace, key string) er
 	return nil
 }
 
-func (s *SQLiteStore) DeleteRuleset(ctx context.Context, namespace, key string) error {
+func (s *SQLiteStore) DeleteRuleset(ctx context.Context, workspace, key string) error {
 	res, err := s.db.ExecContext(ctx,
-		`DELETE FROM rulesets WHERE namespace = ? AND key = ?`, namespace, key)
+		`DELETE FROM rulesets WHERE workspace = ? AND key = ?`, workspace, key)
 	if err != nil {
 		return err
 	}
@@ -223,11 +292,11 @@ func (s *SQLiteStore) DeleteRuleset(ctx context.Context, namespace, key string) 
 	return nil
 }
 
-func (s *SQLiteStore) ListVersions(ctx context.Context, namespace, key string, limit, offset int) ([]*domain.Version, error) {
+func (s *SQLiteStore) ListVersions(ctx context.Context, workspace, key string, limit, offset int) ([]*domain.Version, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT namespace, ruleset_key, version, checksum, created_at
-         FROM versions WHERE namespace = ? AND ruleset_key = ? ORDER BY version ASC LIMIT ? OFFSET ?`,
-		namespace, key, limit, offset)
+		`SELECT workspace, ruleset_key, version, checksum, created_at
+         FROM versions WHERE workspace = ? AND ruleset_key = ? ORDER BY version ASC LIMIT ? OFFSET ?`,
+		workspace, key, limit, offset)
 	if err != nil {
 		return nil, err
 	}
@@ -236,7 +305,7 @@ func (s *SQLiteStore) ListVersions(ctx context.Context, namespace, key string, l
 	for rows.Next() {
 		v := &domain.Version{}
 		var ca string
-		if err := rows.Scan(&v.Namespace, &v.RulesetKey, &v.Version, &v.Checksum, &ca); err != nil {
+		if err := rows.Scan(&v.Workspace, &v.RulesetKey, &v.Version, &v.Checksum, &ca); err != nil {
 			return nil, err
 		}
 		v.CreatedAt, _ = time.Parse(time.RFC3339Nano, ca)
@@ -245,14 +314,14 @@ func (s *SQLiteStore) ListVersions(ctx context.Context, namespace, key string, l
 	return out, rows.Err()
 }
 
-func (s *SQLiteStore) GetVersion(ctx context.Context, namespace, key string, version int) (*domain.Version, error) {
+func (s *SQLiteStore) GetVersion(ctx context.Context, workspace, key string, version int) (*domain.Version, error) {
 	v := &domain.Version{}
 	var ca string
 	err := s.db.QueryRowContext(ctx,
-		`SELECT namespace, ruleset_key, version, checksum, created_at
-         FROM versions WHERE namespace = ? AND ruleset_key = ? AND version = ?`,
-		namespace, key, version).
-		Scan(&v.Namespace, &v.RulesetKey, &v.Version, &v.Checksum, &ca)
+		`SELECT workspace, ruleset_key, version, checksum, created_at
+         FROM versions WHERE workspace = ? AND ruleset_key = ? AND version = ?`,
+		workspace, key, version).
+		Scan(&v.Workspace, &v.RulesetKey, &v.Version, &v.Checksum, &ca)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, port.ErrNotFound
 	}
@@ -263,14 +332,14 @@ func (s *SQLiteStore) GetVersion(ctx context.Context, namespace, key string, ver
 	return v, nil
 }
 
-func (s *SQLiteStore) GetLatestVersion(ctx context.Context, namespace, key string) (*domain.Version, error) {
+func (s *SQLiteStore) GetLatestVersion(ctx context.Context, workspace, key string) (*domain.Version, error) {
 	v := &domain.Version{}
 	var ca string
 	err := s.db.QueryRowContext(ctx,
-		`SELECT namespace, ruleset_key, version, checksum, created_at
-         FROM versions WHERE namespace = ? AND ruleset_key = ?
-         ORDER BY version DESC LIMIT 1`, namespace, key).
-		Scan(&v.Namespace, &v.RulesetKey, &v.Version, &v.Checksum, &ca)
+		`SELECT workspace, ruleset_key, version, checksum, created_at
+         FROM versions WHERE workspace = ? AND ruleset_key = ?
+         ORDER BY version DESC LIMIT 1`, workspace, key).
+		Scan(&v.Workspace, &v.RulesetKey, &v.Version, &v.Checksum, &ca)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, port.ErrNotFound
 	}
@@ -290,8 +359,8 @@ func (s *SQLiteStore) CreateVersion(ctx context.Context, v *domain.Version) erro
 
 	var count int
 	if err := tx.QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM versions WHERE namespace = ? AND ruleset_key = ? AND version = ?`,
-		v.Namespace, v.RulesetKey, v.Version).Scan(&count); err != nil {
+		`SELECT COUNT(*) FROM versions WHERE workspace = ? AND ruleset_key = ? AND version = ?`,
+		v.Workspace, v.RulesetKey, v.Version).Scan(&count); err != nil {
 		return err
 	}
 	if count > 0 {
@@ -299,9 +368,9 @@ func (s *SQLiteStore) CreateVersion(ctx context.Context, v *domain.Version) erro
 	}
 
 	if _, err := tx.ExecContext(ctx,
-		`INSERT INTO versions (namespace, ruleset_key, version, checksum, created_at)
+		`INSERT INTO versions (workspace, ruleset_key, version, checksum, created_at)
          VALUES (?, ?, ?, ?, ?)`,
-		v.Namespace, v.RulesetKey, v.Version, v.Checksum,
+		v.Workspace, v.RulesetKey, v.Version, v.Checksum,
 		v.CreatedAt.UTC().Format(time.RFC3339Nano),
 	); err != nil {
 		return err
@@ -309,11 +378,11 @@ func (s *SQLiteStore) CreateVersion(ctx context.Context, v *domain.Version) erro
 	return tx.Commit()
 }
 
-func (s *SQLiteStore) NextVersionNumber(ctx context.Context, namespace, key string) (int, error) {
+func (s *SQLiteStore) NextVersionNumber(ctx context.Context, workspace, key string) (int, error) {
 	var maxVer sql.NullInt64
 	err := s.db.QueryRowContext(ctx,
-		`SELECT MAX(version) FROM versions WHERE namespace = ? AND ruleset_key = ?`,
-		namespace, key).Scan(&maxVer)
+		`SELECT MAX(version) FROM versions WHERE workspace = ? AND ruleset_key = ?`,
+		workspace, key).Scan(&maxVer)
 	if err != nil {
 		return 0, err
 	}
@@ -513,9 +582,9 @@ func (s *SQLiteStore) CreateAPIKey(ctx context.Context, k *domain.APIKey) error 
 		exp = k.ExpiresAt.UTC().Format(time.RFC3339Nano)
 	}
 	_, err := s.db.ExecContext(ctx,
-		`INSERT INTO api_keys (id, name, key_hash, namespace, role, created_at, expires_at)
+		`INSERT INTO api_keys (id, name, key_hash, workspace, role, created_at, expires_at)
          VALUES (?, ?, ?, ?, ?, ?, ?)`,
-		k.ID, k.Name, k.KeyHash, k.Namespace, int(k.Role),
+		k.ID, k.Name, k.KeyHash, k.Workspace, int(k.Role),
 		k.CreatedAt.UTC().Format(time.RFC3339Nano), exp,
 	)
 	if err != nil {
@@ -532,9 +601,9 @@ func (s *SQLiteStore) GetAPIKeyByHash(ctx context.Context, keyHash string) (*dom
 	var ca, exp, rev sql.NullString
 	var role int
 	err := s.db.QueryRowContext(ctx,
-		`SELECT id, name, key_hash, namespace, role, created_at, expires_at, revoked_at
+		`SELECT id, name, key_hash, workspace, role, created_at, expires_at, revoked_at
          FROM api_keys WHERE key_hash = ?`, keyHash).
-		Scan(&k.ID, &k.Name, &k.KeyHash, &k.Namespace, &role, &ca, &exp, &rev)
+		Scan(&k.ID, &k.Name, &k.KeyHash, &k.Workspace, &role, &ca, &exp, &rev)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, port.ErrNotFound
 	}
@@ -556,7 +625,7 @@ func (s *SQLiteStore) GetAPIKeyByHash(ctx context.Context, keyHash string) (*dom
 
 func (s *SQLiteStore) ListAPIKeys(ctx context.Context, limit, offset int) ([]*domain.APIKey, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT id, name, key_hash, namespace, role, created_at, expires_at, revoked_at
+		`SELECT id, name, key_hash, workspace, role, created_at, expires_at, revoked_at
          FROM api_keys ORDER BY created_at DESC LIMIT ? OFFSET ?`, limit, offset)
 	if err != nil {
 		return nil, err
@@ -567,7 +636,7 @@ func (s *SQLiteStore) ListAPIKeys(ctx context.Context, limit, offset int) ([]*do
 		k := &domain.APIKey{}
 		var ca, exp, rev sql.NullString
 		var role int
-		if err := rows.Scan(&k.ID, &k.Name, &k.KeyHash, &k.Namespace, &role, &ca, &exp, &rev); err != nil {
+		if err := rows.Scan(&k.ID, &k.Name, &k.KeyHash, &k.Workspace, &role, &ca, &exp, &rev); err != nil {
 			return nil, err
 		}
 		k.Role = domain.Role(role)
@@ -603,17 +672,17 @@ func (s *SQLiteStore) RevokeAPIKey(ctx context.Context, keyID string) error {
 
 func (s *SQLiteStore) UpsertUserRole(ctx context.Context, ur *domain.UserRole) error {
 	_, err := s.db.ExecContext(ctx,
-		`INSERT OR REPLACE INTO user_roles (user_id, namespace, role_mask) VALUES (?, ?, ?)`,
-		ur.UserID, ur.Namespace, int(ur.RoleMask))
+		`INSERT OR REPLACE INTO user_roles (user_id, workspace, role_mask) VALUES (?, ?, ?)`,
+		ur.UserID, ur.Workspace, int(ur.RoleMask))
 	return err
 }
 
-func (s *SQLiteStore) GetUserRole(ctx context.Context, userID, namespace string) (*domain.UserRole, error) {
+func (s *SQLiteStore) GetUserRole(ctx context.Context, userID, workspace string) (*domain.UserRole, error) {
 	ur := &domain.UserRole{}
 	var mask int
 	err := s.db.QueryRowContext(ctx,
-		`SELECT user_id, namespace, role_mask FROM user_roles WHERE user_id = ? AND namespace = ?`,
-		userID, namespace).Scan(&ur.UserID, &ur.Namespace, &mask)
+		`SELECT user_id, workspace, role_mask FROM user_roles WHERE user_id = ? AND workspace = ?`,
+		userID, workspace).Scan(&ur.UserID, &ur.Workspace, &mask)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, port.ErrNotFound
 	}
@@ -626,7 +695,7 @@ func (s *SQLiteStore) GetUserRole(ctx context.Context, userID, namespace string)
 
 func (s *SQLiteStore) ListUserRoles(ctx context.Context, userID string) ([]*domain.UserRole, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT user_id, namespace, role_mask FROM user_roles WHERE user_id = ?`, userID)
+		`SELECT user_id, workspace, role_mask FROM user_roles WHERE user_id = ?`, userID)
 	if err != nil {
 		return nil, err
 	}
@@ -635,7 +704,7 @@ func (s *SQLiteStore) ListUserRoles(ctx context.Context, userID string) ([]*doma
 	for rows.Next() {
 		ur := &domain.UserRole{}
 		var mask int
-		if err := rows.Scan(&ur.UserID, &ur.Namespace, &mask); err != nil {
+		if err := rows.Scan(&ur.UserID, &ur.Workspace, &mask); err != nil {
 			return nil, err
 		}
 		ur.RoleMask = domain.Role(mask)
@@ -644,9 +713,9 @@ func (s *SQLiteStore) ListUserRoles(ctx context.Context, userID string) ([]*doma
 	return out, rows.Err()
 }
 
-func (s *SQLiteStore) DeleteUserRole(ctx context.Context, userID, namespace string) error {
+func (s *SQLiteStore) DeleteUserRole(ctx context.Context, userID, workspace string) error {
 	res, err := s.db.ExecContext(ctx,
-		`DELETE FROM user_roles WHERE user_id = ? AND namespace = ?`, userID, namespace)
+		`DELETE FROM user_roles WHERE user_id = ? AND workspace = ?`, userID, workspace)
 	if err != nil {
 		return err
 	}

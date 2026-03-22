@@ -19,12 +19,12 @@ func NewRulesetHandler(svc service.RulesetUseCase) *RulesetHandler {
 }
 
 func (h *RulesetHandler) ListRulesets(w http.ResponseWriter, r *http.Request) {
-	ns, ok := NamespaceParam(w, r)
+	ws, ok := WorkspaceParam(w, r)
 	if !ok {
 		return
 	}
 	limit, offset := PageParams(r)
-	rulesets, err := h.svc.ListRulesets(r.Context(), ns, limit, offset)
+	rulesets, err := h.svc.ListRulesets(r.Context(), ws, limit, offset)
 	if err != nil {
 		WriteError(w, http.StatusInternalServerError, "INTERNAL", "failed to list rulesets")
 		return
@@ -37,18 +37,18 @@ func (h *RulesetHandler) CreateRuleset(w http.ResponseWriter, r *http.Request) {
 		Key         string `json:"key"`
 		Name        string `json:"name"`
 		Description string `json:"description"`
-		Namespace   string `json:"namespace"`
+		Workspace   string `json:"workspace"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		WriteError(w, http.StatusBadRequest, "BAD_REQUEST", "invalid JSON body")
 		return
 	}
-	if body.Namespace == "" {
-		body.Namespace = "default"
+	if body.Workspace == "" {
+		body.Workspace = "default"
 	}
-	if !ValidNamespace(body.Namespace) {
-		WriteError(w, http.StatusBadRequest, "INVALID_NAMESPACE",
-			"namespace must be non-empty, at most 128 characters, and match [a-z0-9_-]")
+	if !ValidWorkspace(body.Workspace) {
+		WriteError(w, http.StatusBadRequest, "INVALID_WORKSPACE",
+			"workspace must be non-empty, at most 128 characters, and match [a-z0-9_-]")
 		return
 	}
 	if !ValidKey(body.Key) {
@@ -57,7 +57,7 @@ func (h *RulesetHandler) CreateRuleset(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	rs, err := h.svc.CreateRuleset(r.Context(), body.Namespace, body.Key, body.Name, body.Description)
+	rs, err := h.svc.CreateRuleset(r.Context(), body.Workspace, body.Key, body.Name, body.Description)
 	if err != nil {
 		if errors.Is(err, service.ErrAlreadyExists) {
 			WriteError(w, http.StatusConflict, "ALREADY_EXISTS", "ruleset already exists")
@@ -71,12 +71,12 @@ func (h *RulesetHandler) CreateRuleset(w http.ResponseWriter, r *http.Request) {
 
 func (h *RulesetHandler) GetRuleset(w http.ResponseWriter, r *http.Request) {
 	key := r.PathValue("key")
-	ns, ok := NamespaceParam(w, r)
+	ws, ok := WorkspaceParam(w, r)
 	if !ok {
 		return
 	}
 
-	rs, err := h.svc.GetRuleset(r.Context(), ns, key)
+	rs, err := h.svc.GetRuleset(r.Context(), ws, key)
 	if err != nil {
 		if errors.Is(err, service.ErrNotFound) {
 			WriteError(w, http.StatusNotFound, "NOT_FOUND", "ruleset not found")
@@ -90,12 +90,12 @@ func (h *RulesetHandler) GetRuleset(w http.ResponseWriter, r *http.Request) {
 
 func (h *RulesetHandler) DeleteRuleset(w http.ResponseWriter, r *http.Request) {
 	key := r.PathValue("key")
-	ns, ok := NamespaceParam(w, r)
+	ws, ok := WorkspaceParam(w, r)
 	if !ok {
 		return
 	}
 
-	if err := h.svc.DeleteRuleset(r.Context(), ns, key); err != nil {
+	if err := h.svc.DeleteRuleset(r.Context(), ws, key); err != nil {
 		if errors.Is(err, service.ErrNotFound) {
 			WriteError(w, http.StatusNotFound, "NOT_FOUND", "ruleset not found")
 			return
@@ -108,12 +108,12 @@ func (h *RulesetHandler) DeleteRuleset(w http.ResponseWriter, r *http.Request) {
 
 func (h *RulesetHandler) GetDraft(w http.ResponseWriter, r *http.Request) {
 	key := r.PathValue("key")
-	ns, ok := NamespaceParam(w, r)
+	ws, ok := WorkspaceParam(w, r)
 	if !ok {
 		return
 	}
 
-	draft, err := h.svc.GetDraft(r.Context(), ns, key)
+	draft, err := h.svc.GetDraft(r.Context(), ws, key)
 	if err != nil {
 		if errors.Is(err, service.ErrNotFound) {
 			WriteError(w, http.StatusNotFound, "NOT_FOUND", "draft not found")
@@ -129,7 +129,7 @@ const maxDraftBodyBytes = 1 << 20 // 1 MiB
 
 func (h *RulesetHandler) UpsertDraft(w http.ResponseWriter, r *http.Request) {
 	key := r.PathValue("key")
-	ns, ok := NamespaceParam(w, r)
+	ws, ok := WorkspaceParam(w, r)
 	if !ok {
 		return
 	}
@@ -154,7 +154,7 @@ func (h *RulesetHandler) UpsertDraft(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	draft, err := h.svc.UpsertDraft(r.Context(), ns, key, body.DSL)
+	draft, err := h.svc.UpsertDraft(r.Context(), ws, key, body.DSL)
 	if err != nil {
 		if errors.Is(err, service.ErrNotFound) {
 			WriteError(w, http.StatusNotFound, "NOT_FOUND", "ruleset not found")
@@ -173,12 +173,12 @@ func (h *RulesetHandler) UpsertDraft(w http.ResponseWriter, r *http.Request) {
 
 func (h *RulesetHandler) DeleteDraft(w http.ResponseWriter, r *http.Request) {
 	key := r.PathValue("key")
-	ns, ok := NamespaceParam(w, r)
+	ws, ok := WorkspaceParam(w, r)
 	if !ok {
 		return
 	}
 
-	if err := h.svc.DeleteDraft(r.Context(), ns, key); err != nil {
+	if err := h.svc.DeleteDraft(r.Context(), ws, key); err != nil {
 		if errors.Is(err, service.ErrNotFound) {
 			WriteError(w, http.StatusNotFound, "NOT_FOUND", "draft not found")
 			return
@@ -191,12 +191,12 @@ func (h *RulesetHandler) DeleteDraft(w http.ResponseWriter, r *http.Request) {
 
 func (h *RulesetHandler) Publish(w http.ResponseWriter, r *http.Request) {
 	key := r.PathValue("key")
-	ns, ok := NamespaceParam(w, r)
+	ws, ok := WorkspaceParam(w, r)
 	if !ok {
 		return
 	}
 
-	v, err := h.svc.Publish(r.Context(), ns, key)
+	v, err := h.svc.Publish(r.Context(), ws, key)
 	if err != nil {
 		if errors.Is(err, service.ErrNotFound) {
 			WriteError(w, http.StatusNotFound, "NOT_FOUND", "ruleset or draft not found")
@@ -223,12 +223,12 @@ func (h *RulesetHandler) Publish(w http.ResponseWriter, r *http.Request) {
 
 func (h *RulesetHandler) ListVersions(w http.ResponseWriter, r *http.Request) {
 	key := r.PathValue("key")
-	ns, ok := NamespaceParam(w, r)
+	ws, ok := WorkspaceParam(w, r)
 	if !ok {
 		return
 	}
 	limit, offset := PageParams(r)
-	versions, err := h.svc.ListVersions(r.Context(), ns, key, limit, offset)
+	versions, err := h.svc.ListVersions(r.Context(), ws, key, limit, offset)
 	if err != nil {
 		WriteError(w, http.StatusInternalServerError, "INTERNAL", "failed to list versions")
 		return
@@ -238,7 +238,7 @@ func (h *RulesetHandler) ListVersions(w http.ResponseWriter, r *http.Request) {
 
 func (h *RulesetHandler) GetVersion(w http.ResponseWriter, r *http.Request) {
 	key := r.PathValue("key")
-	ns, ok := NamespaceParam(w, r)
+	ws, ok := WorkspaceParam(w, r)
 	if !ok {
 		return
 	}
@@ -248,7 +248,7 @@ func (h *RulesetHandler) GetVersion(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	v, err := h.svc.GetVersion(r.Context(), ns, key, versionNum)
+	v, err := h.svc.GetVersion(r.Context(), ws, key, versionNum)
 	if err != nil {
 		if errors.Is(err, service.ErrNotFound) {
 			WriteError(w, http.StatusNotFound, "NOT_FOUND", "version not found")
@@ -262,12 +262,12 @@ func (h *RulesetHandler) GetVersion(w http.ResponseWriter, r *http.Request) {
 
 func (h *RulesetHandler) GetLatestVersion(w http.ResponseWriter, r *http.Request) {
 	key := r.PathValue("key")
-	ns, ok := NamespaceParam(w, r)
+	ws, ok := WorkspaceParam(w, r)
 	if !ok {
 		return
 	}
 
-	v, err := h.svc.GetLatestVersion(r.Context(), ns, key)
+	v, err := h.svc.GetLatestVersion(r.Context(), ws, key)
 	if err != nil {
 		if errors.Is(err, service.ErrNotFound) {
 			WriteError(w, http.StatusNotFound, "NOT_FOUND", "no versions found")
@@ -281,7 +281,7 @@ func (h *RulesetHandler) GetLatestVersion(w http.ResponseWriter, r *http.Request
 
 func (h *RulesetHandler) GetVersionBundle(w http.ResponseWriter, r *http.Request) {
 	key := r.PathValue("key")
-	ns, ok := NamespaceParam(w, r)
+	ws, ok := WorkspaceParam(w, r)
 	if !ok {
 		return
 	}
@@ -291,7 +291,7 @@ func (h *RulesetHandler) GetVersionBundle(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	bundleBytes, err := h.svc.GetVersionBundle(r.Context(), ns, key, versionNum)
+	bundleBytes, err := h.svc.GetVersionBundle(r.Context(), ws, key, versionNum)
 	if err != nil {
 		if errors.Is(err, service.ErrNotFound) {
 			WriteError(w, http.StatusNotFound, "NOT_FOUND", "bundle not found")
@@ -310,12 +310,12 @@ func (h *RulesetHandler) GetVersionBundle(w http.ResponseWriter, r *http.Request
 
 func (h *RulesetHandler) GetLatestBundle(w http.ResponseWriter, r *http.Request) {
 	key := r.PathValue("key")
-	ns, ok := NamespaceParam(w, r)
+	ws, ok := WorkspaceParam(w, r)
 	if !ok {
 		return
 	}
 
-	versionNum, bundleBytes, err := h.svc.GetLatestBundle(r.Context(), ns, key)
+	versionNum, bundleBytes, err := h.svc.GetLatestBundle(r.Context(), ws, key)
 	if err != nil {
 		if errors.Is(err, service.ErrNotFound) {
 			WriteError(w, http.StatusNotFound, "NOT_FOUND", "no versions found")

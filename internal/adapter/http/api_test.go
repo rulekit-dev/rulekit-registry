@@ -8,9 +8,9 @@ import (
 	"testing"
 	"time"
 
+	fsblobstore "github.com/rulekit-dev/rulekit-registry/internal/adapter/blob/fs"
 	httpadapter "github.com/rulekit-dev/rulekit-registry/internal/adapter/http"
 	"github.com/rulekit-dev/rulekit-registry/internal/adapter/http/handler"
-	fsblobstore "github.com/rulekit-dev/rulekit-registry/internal/adapter/blob/fs"
 	"github.com/rulekit-dev/rulekit-registry/internal/adapter/mailer"
 	sqlitestore "github.com/rulekit-dev/rulekit-registry/internal/adapter/store/sqlite"
 	"github.com/rulekit-dev/rulekit-registry/internal/config"
@@ -50,17 +50,19 @@ func newTestServer(t *testing.T) (*httptest.Server, string) {
 	rulesetSvc := service.NewRulesetService(db, blobs)
 	authSvc := service.NewAuthService(db, mailer.NewStdout(), []byte(testJWTSecret), testAdminPassword)
 	adminSvc := service.NewAdminService(db)
+	workspaceSvc := service.NewWorkspaceService(db)
 
 	h := handler.NewRulesetHandler(rulesetSvc)
 	authHandler := handler.NewAuthHandler(authSvc)
 	adminHandler := handler.NewAdminHandler(adminSvc)
+	workspaceHandler := handler.NewWorkspaceHandler(workspaceSvc)
 
 	token, err := util.SignAdminToken([]byte(testJWTSecret))
 	if err != nil {
 		t.Fatalf("SignAdminToken: %v", err)
 	}
 
-	srv := httptest.NewServer(httpadapter.NewRouter(h, authHandler, adminHandler, db, cfg, time.Now()))
+	srv := httptest.NewServer(httpadapter.NewRouter(h, authHandler, adminHandler, workspaceHandler, db, cfg, time.Now()))
 	return srv, token
 }
 
@@ -201,11 +203,11 @@ func TestCreateRulesetInvalidKey(t *testing.T) {
 	}
 }
 
-func TestCreateRulesetInvalidNamespace(t *testing.T) {
+func TestCreateRulesetInvalidWorkspace(t *testing.T) {
 	srv, token := newTestServer(t)
 	defer srv.Close()
 
-	resp := authPost(t, token, srv.URL+"/v1/rulesets", mustJSON(t, map[string]string{"key": "rules", "name": "Bad", "namespace": "INVALID NS!"}))
+	resp := authPost(t, token, srv.URL+"/v1/rulesets", mustJSON(t, map[string]string{"key": "rules", "name": "Bad", "workspace": "INVALID workspace!"}))
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusBadRequest {
@@ -661,37 +663,37 @@ func TestHealthzSkipsAuth(t *testing.T) {
 	}
 }
 
-// --- Namespace isolation ---
+// --- Workspace isolation ---
 
-func TestNamespaceIsolation(t *testing.T) {
+func TestWorkspaceIsolation(t *testing.T) {
 	srv, token := newTestServer(t)
 	defer srv.Close()
 
-	for _, ns := range []string{"team-a", "team-b"} {
+	for _, workspace := range []string{"team-a", "team-b"} {
 		resp := authPost(t, token, srv.URL+"/v1/rulesets",
-			mustJSON(t, map[string]string{"key": "shared", "name": "Shared", "namespace": ns}))
+			mustJSON(t, map[string]string{"key": "shared", "name": "Shared", "workspace": workspace}))
 		resp.Body.Close()
 		if resp.StatusCode != http.StatusCreated {
-			t.Fatalf("POST ns=%s: status %d", ns, resp.StatusCode)
+			t.Fatalf("POST ws=%s: status %d", workspace, resp.StatusCode)
 		}
 	}
 
-	for _, ns := range []string{"team-a", "team-b"} {
-		resp := authGet(t, token, srv.URL+"/v1/rulesets?namespace="+ns)
+	for _, workspace := range []string{"team-a", "team-b"} {
+		resp := authGet(t, token, srv.URL+"/v1/rulesets?workspace="+workspace)
 		defer resp.Body.Close()
 		var list []*domain.Ruleset
 		decode(t, resp, &list)
 		if len(list) != 1 {
-			t.Errorf("ns=%s: got %d rulesets, want 1", ns, len(list))
+			t.Errorf("ws=%s: got %d rulesets, want 1", workspace, len(list))
 		}
 	}
 }
 
-func TestInvalidNamespaceQueryParam(t *testing.T) {
+func TestInvalidWorkspaceQueryParam(t *testing.T) {
 	srv, token := newTestServer(t)
 	defer srv.Close()
 
-	resp := authGet(t, token, srv.URL+"/v1/rulesets?namespace=INVALID!")
+	resp := authGet(t, token, srv.URL+"/v1/rulesets?workspace=INVALID!")
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusBadRequest {

@@ -84,14 +84,14 @@ func apiTokenMiddleware(db storePort, secret []byte, next http.Handler) http.Han
 
 		// Synthesise claims from the API key so downstream RBAC checks are uniform.
 		synth := &util.Claims{
-			Roles: []util.RoleClaim{{Namespace: k.Namespace, RoleMask: k.Role}},
+			Roles: []util.RoleClaim{{Workspace: k.Workspace, Role: k.Role}},
 		}
 		ctx := handler.ClaimsContext(r.Context(), synth)
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
 }
 
-// requireRole checks the caller has at least the given role in the target namespace.
+// requireRole checks the caller has at least the given role in the target workspace.
 func requireRole(required domain.Role, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		claims := handler.ClaimsFromContext(r.Context())
@@ -100,12 +100,12 @@ func requireRole(required domain.Role, next http.Handler) http.Handler {
 			return
 		}
 
-		ns := r.URL.Query().Get("namespace")
-		if ns == "" {
-			ns = "default"
+		ws := r.URL.Query().Get("workspace")
+		if ws == "" {
+			ws = "default"
 		}
 
-		mask := claims.RoleForNamespace(ns)
+		mask := claims.RoleForWorkspace(ws)
 		if !mask.Has(required) {
 			handler.WriteError(w, http.StatusForbidden, "FORBIDDEN", "insufficient permissions")
 			return

@@ -5,8 +5,14 @@ import (
 	"time"
 )
 
+type Workspace struct {
+	Name        string    `json:"name"`
+	Description string    `json:"description"`
+	CreatedAt   time.Time `json:"created_at"`
+}
+
 type Ruleset struct {
-	Namespace   string    `json:"namespace"`
+	Workspace   string    `json:"workspace"`
 	Key         string    `json:"key"`
 	Name        string    `json:"name"`
 	Description string    `json:"description"`
@@ -15,14 +21,14 @@ type Ruleset struct {
 }
 
 type Draft struct {
-	Namespace  string          `json:"namespace"`
+	Workspace  string          `json:"workspace"`
 	RulesetKey string          `json:"ruleset_key"`
 	DSL        json.RawMessage `json:"dsl"`
 	UpdatedAt  time.Time       `json:"updated_at"`
 }
 
 type Version struct {
-	Namespace  string          `json:"namespace"`
+	Workspace  string          `json:"workspace"`
 	RulesetKey string          `json:"ruleset_key"`
 	Version    int             `json:"version"`
 	Checksum   string          `json:"checksum"` // "sha256:<hex>"
@@ -31,7 +37,7 @@ type Version struct {
 }
 
 type VersionManifest struct {
-	Namespace  string    `json:"namespace"`
+	Workspace  string    `json:"workspace"`
 	RulesetKey string    `json:"ruleset_key"`
 	Version    int       `json:"version"`
 	Checksum   string    `json:"checksum"`

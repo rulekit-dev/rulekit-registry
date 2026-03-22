@@ -42,7 +42,7 @@ func RunSuite(t *testing.T, newStore func(t *testing.T) port.Datastore) {
 
 		now := time.Now().UTC().Truncate(time.Second)
 		r := &domain.Ruleset{
-			Namespace:   "acme",
+			Workspace:   "acme",
 			Key:         "shipping-rules",
 			Name:        "Shipping Rules",
 			Description: "Rules for shipping cost calculation",
@@ -58,8 +58,8 @@ func RunSuite(t *testing.T, newStore func(t *testing.T) port.Datastore) {
 		if err != nil {
 			t.Fatalf("GetRuleset: %v", err)
 		}
-		if got.Namespace != r.Namespace {
-			t.Errorf("Namespace: got %q, want %q", got.Namespace, r.Namespace)
+		if got.Workspace != r.Workspace {
+			t.Errorf("Workspace: got %q, want %q", got.Workspace, r.Workspace)
 		}
 		if got.Key != r.Key {
 			t.Errorf("Key: got %q, want %q", got.Key, r.Key)
@@ -90,12 +90,12 @@ func RunSuite(t *testing.T, newStore func(t *testing.T) port.Datastore) {
 		ctx := context.Background()
 
 		now := time.Now().UTC().Truncate(time.Second)
-		ns := "org-list"
+		workspace := "org-list"
 
 		keys := []string{"ruleset-b", "ruleset-a", "ruleset-c"}
 		for _, k := range keys {
 			if err := s.CreateRuleset(ctx, &domain.Ruleset{
-				Namespace: ns,
+				Workspace: workspace,
 				Key:       k,
 				Name:      "Name " + k,
 				CreatedAt: now,
@@ -105,18 +105,18 @@ func RunSuite(t *testing.T, newStore func(t *testing.T) port.Datastore) {
 			}
 		}
 
-		// Also create a ruleset in a different namespace to verify isolation.
+		// Also create a ruleset in a different workspace to verify isolation.
 		if err := s.CreateRuleset(ctx, &domain.Ruleset{
-			Namespace: "other-ns",
+			Workspace: "other-workspace",
 			Key:       "other-ruleset",
 			Name:      "Other",
 			CreatedAt: now,
 			UpdatedAt: now,
 		}); err != nil {
-			t.Fatalf("CreateRuleset other-ns: %v", err)
+			t.Fatalf("CreateRuleset other-workspace: %v", err)
 		}
 
-		list, err := s.ListRulesets(ctx, ns, 50, 0)
+		list, err := s.ListRulesets(ctx, workspace, 50, 0)
 		if err != nil {
 			t.Fatalf("ListRulesets: %v", err)
 		}
@@ -132,22 +132,22 @@ func RunSuite(t *testing.T, newStore func(t *testing.T) port.Datastore) {
 			}
 		}
 
-		// Different namespace should be isolated.
-		otherList, err := s.ListRulesets(ctx, "other-ns", 50, 0)
+		// Different workspace should be isolated.
+		otherList, err := s.ListRulesets(ctx, "other-workspace", 50, 0)
 		if err != nil {
-			t.Fatalf("ListRulesets other-ns: %v", err)
+			t.Fatalf("ListRulesets other-workspace: %v", err)
 		}
 		if len(otherList) != 1 {
-			t.Errorf("other-ns count: got %d, want 1", len(otherList))
+			t.Errorf("other-workspace count: got %d, want 1", len(otherList))
 		}
 
-		// Namespace with no rulesets returns empty slice (not error).
-		emptyList, err := s.ListRulesets(ctx, "empty-ns", 50, 0)
+		// Workspace with no rulesets returns empty slice (not error).
+		emptyList, err := s.ListRulesets(ctx, "empty-workspace", 50, 0)
 		if err != nil {
-			t.Fatalf("ListRulesets empty-ns: %v", err)
+			t.Fatalf("ListRulesets empty-workspace: %v", err)
 		}
 		if len(emptyList) != 0 {
-			t.Errorf("empty-ns count: got %d, want 0", len(emptyList))
+			t.Errorf("empty-workspace count: got %d, want 0", len(emptyList))
 		}
 	})
 
@@ -157,12 +157,12 @@ func RunSuite(t *testing.T, newStore func(t *testing.T) port.Datastore) {
 		ctx := context.Background()
 
 		now := time.Now().UTC().Truncate(time.Second)
-		ns := "draft-ns"
+		workspace := "draft-workspace"
 		key := "pricing-rules"
 
 		// Create the parent ruleset first.
 		if err := s.CreateRuleset(ctx, &domain.Ruleset{
-			Namespace: ns, Key: key, Name: "Pricing Rules",
+			Workspace: workspace, Key: key, Name: "Pricing Rules",
 			CreatedAt: now, UpdatedAt: now,
 		}); err != nil {
 			t.Fatalf("CreateRuleset: %v", err)
@@ -170,7 +170,7 @@ func RunSuite(t *testing.T, newStore func(t *testing.T) port.Datastore) {
 
 		dsl1 := json.RawMessage(`{"dsl_version":"v1","strategy":"first_match","schema":{},"rules":[]}`)
 		d := &domain.Draft{
-			Namespace:  ns,
+			Workspace:  workspace,
 			RulesetKey: key,
 			DSL:        dsl1,
 			UpdatedAt:  now,
@@ -181,15 +181,15 @@ func RunSuite(t *testing.T, newStore func(t *testing.T) port.Datastore) {
 			t.Fatalf("UpsertDraft (insert): %v", err)
 		}
 
-		got, err := s.GetDraft(ctx, ns, key)
+		got, err := s.GetDraft(ctx, workspace, key)
 		if err != nil {
 			t.Fatalf("GetDraft: %v", err)
 		}
 		if !jsonEqual(got.DSL, dsl1) {
 			t.Errorf("DSL after insert: got %s, want %s", got.DSL, dsl1)
 		}
-		if got.Namespace != ns {
-			t.Errorf("Namespace: got %q, want %q", got.Namespace, ns)
+		if got.Workspace != workspace {
+			t.Errorf("Workspace: got %q, want %q", got.Workspace, workspace)
 		}
 		if got.RulesetKey != key {
 			t.Errorf("RulesetKey: got %q, want %q", got.RulesetKey, key)
@@ -199,7 +199,7 @@ func RunSuite(t *testing.T, newStore func(t *testing.T) port.Datastore) {
 		dsl2 := json.RawMessage(`{"dsl_version":"v1","strategy":"first_match","schema":{},"rules":[{"id":"r1"}]}`)
 		later := now.Add(time.Minute)
 		d2 := &domain.Draft{
-			Namespace:  ns,
+			Workspace:  workspace,
 			RulesetKey: key,
 			DSL:        dsl2,
 			UpdatedAt:  later,
@@ -208,7 +208,7 @@ func RunSuite(t *testing.T, newStore func(t *testing.T) port.Datastore) {
 			t.Fatalf("UpsertDraft (update): %v", err)
 		}
 
-		got2, err := s.GetDraft(ctx, ns, key)
+		got2, err := s.GetDraft(ctx, workspace, key)
 		if err != nil {
 			t.Fatalf("GetDraft after update: %v", err)
 		}
@@ -217,7 +217,7 @@ func RunSuite(t *testing.T, newStore func(t *testing.T) port.Datastore) {
 		}
 
 		// Get draft for non-existent key returns ErrNotFound.
-		_, err = s.GetDraft(ctx, ns, "nonexistent-key")
+		_, err = s.GetDraft(ctx, workspace, "nonexistent-key")
 		if !errors.Is(err, port.ErrNotFound) {
 			t.Errorf("GetDraft non-existent: got %v, want ErrNotFound", err)
 		}
@@ -229,18 +229,18 @@ func RunSuite(t *testing.T, newStore func(t *testing.T) port.Datastore) {
 		ctx := context.Background()
 
 		now := time.Now().UTC().Truncate(time.Second)
-		ns := "publish-ns"
+		workspace := "publish-workspace"
 		key := "tax-rules"
 
 		if err := s.CreateRuleset(ctx, &domain.Ruleset{
-			Namespace: ns, Key: key, Name: "Tax Rules",
+			Workspace: workspace, Key: key, Name: "Tax Rules",
 			CreatedAt: now, UpdatedAt: now,
 		}); err != nil {
 			t.Fatalf("CreateRuleset: %v", err)
 		}
 
 		// NextVersionNumber returns 1 for a new ruleset.
-		n, err := s.NextVersionNumber(ctx, ns, key)
+		n, err := s.NextVersionNumber(ctx, workspace, key)
 		if err != nil {
 			t.Fatalf("NextVersionNumber (first): %v", err)
 		}
@@ -249,7 +249,7 @@ func RunSuite(t *testing.T, newStore func(t *testing.T) port.Datastore) {
 		}
 
 		v1 := &domain.Version{
-			Namespace:  ns,
+			Workspace:  workspace,
 			RulesetKey: key,
 			Version:    1,
 			Checksum:   "sha256:abc123",
@@ -260,7 +260,7 @@ func RunSuite(t *testing.T, newStore func(t *testing.T) port.Datastore) {
 		}
 
 		// NextVersionNumber now returns 2.
-		n2, err := s.NextVersionNumber(ctx, ns, key)
+		n2, err := s.NextVersionNumber(ctx, workspace, key)
 		if err != nil {
 			t.Fatalf("NextVersionNumber (second): %v", err)
 		}
@@ -269,7 +269,7 @@ func RunSuite(t *testing.T, newStore func(t *testing.T) port.Datastore) {
 		}
 
 		v2 := &domain.Version{
-			Namespace:  ns,
+			Workspace:  workspace,
 			RulesetKey: key,
 			Version:    2,
 			Checksum:   "sha256:def456",
@@ -280,7 +280,7 @@ func RunSuite(t *testing.T, newStore func(t *testing.T) port.Datastore) {
 		}
 
 		// ListVersions returns [v1, v2] in ascending order.
-		versions, err := s.ListVersions(ctx, ns, key, 50, 0)
+		versions, err := s.ListVersions(ctx, workspace, key, 50, 0)
 		if err != nil {
 			t.Fatalf("ListVersions: %v", err)
 		}
@@ -295,7 +295,7 @@ func RunSuite(t *testing.T, newStore func(t *testing.T) port.Datastore) {
 		}
 
 		// GetLatestVersion returns v2.
-		latest, err := s.GetLatestVersion(ctx, ns, key)
+		latest, err := s.GetLatestVersion(ctx, workspace, key)
 		if err != nil {
 			t.Fatalf("GetLatestVersion: %v", err)
 		}
@@ -307,7 +307,7 @@ func RunSuite(t *testing.T, newStore func(t *testing.T) port.Datastore) {
 		}
 
 		// GetVersion(v1) returns v1.
-		gotV1, err := s.GetVersion(ctx, ns, key, 1)
+		gotV1, err := s.GetVersion(ctx, workspace, key, 1)
 		if err != nil {
 			t.Fatalf("GetVersion(1): %v", err)
 		}
@@ -325,18 +325,18 @@ func RunSuite(t *testing.T, newStore func(t *testing.T) port.Datastore) {
 		ctx := context.Background()
 
 		now := time.Now().UTC().Truncate(time.Second)
-		ns := "immutable-ns"
+		workspace := "immutable-workspace"
 		key := "immutable-rules"
 
 		if err := s.CreateRuleset(ctx, &domain.Ruleset{
-			Namespace: ns, Key: key, Name: "Immutable Rules",
+			Workspace: workspace, Key: key, Name: "Immutable Rules",
 			CreatedAt: now, UpdatedAt: now,
 		}); err != nil {
 			t.Fatalf("CreateRuleset: %v", err)
 		}
 
 		v1 := &domain.Version{
-			Namespace:  ns,
+			Workspace:  workspace,
 			RulesetKey: key,
 			Version:    1,
 			Checksum:   "sha256:aaa",
@@ -355,7 +355,7 @@ func RunSuite(t *testing.T, newStore func(t *testing.T) port.Datastore) {
 		}
 	})
 
-	t.Run("TestNamespaceIsolation", func(t *testing.T) {
+	t.Run("TestWorkspaceIsolation", func(t *testing.T) {
 		t.Parallel()
 		s := newStore(t)
 		ctx := context.Background()
@@ -363,69 +363,69 @@ func RunSuite(t *testing.T, newStore func(t *testing.T) port.Datastore) {
 		now := time.Now().UTC().Truncate(time.Second)
 		key := "shared-key"
 
-		// Create the same key in two different namespaces — both should succeed.
-		for _, ns := range []string{"ns-alpha", "ns-beta"} {
+		// Create the same key in two different workspaces — both should succeed.
+		for _, workspace := range []string{"workspace-alpha", "workspace-beta"} {
 			if err := s.CreateRuleset(ctx, &domain.Ruleset{
-				Namespace: ns, Key: key, Name: "Name in " + ns,
+				Workspace: workspace, Key: key, Name: "Name in " + workspace,
 				CreatedAt: now, UpdatedAt: now,
 			}); err != nil {
-				t.Fatalf("CreateRuleset ns=%q: %v", ns, err)
+				t.Fatalf("CreateRuleset workspace=%q: %v", workspace, err)
 			}
 		}
 
-		// Each namespace returns its own record.
-		for _, ns := range []string{"ns-alpha", "ns-beta"} {
-			r, err := s.GetRuleset(ctx, ns, key)
+		// Each workspace returns its own record.
+		for _, workspace := range []string{"workspace-alpha", "workspace-beta"} {
+			r, err := s.GetRuleset(ctx, workspace, key)
 			if err != nil {
-				t.Fatalf("GetRuleset ns=%q: %v", ns, err)
+				t.Fatalf("GetRuleset workspace=%q: %v", workspace, err)
 			}
-			if r.Namespace != ns {
-				t.Errorf("GetRuleset ns=%q: Namespace=%q", ns, r.Namespace)
+			if r.Workspace != workspace {
+				t.Errorf("GetRuleset workspace=%q: Workspace=%q", workspace, r.Workspace)
 			}
-			wantName := "Name in " + ns
+			wantName := "Name in " + workspace
 			if r.Name != wantName {
-				t.Errorf("GetRuleset ns=%q: Name=%q, want %q", ns, r.Name, wantName)
+				t.Errorf("GetRuleset workspace=%q: Name=%q, want %q", workspace, r.Name, wantName)
 			}
 		}
 
-		// List results are namespace-scoped.
-		for _, ns := range []string{"ns-alpha", "ns-beta"} {
-			list, err := s.ListRulesets(ctx, ns, 50, 0)
+		// List results are workspace-scoped.
+		for _, workspace := range []string{"workspace-alpha", "workspace-beta"} {
+			list, err := s.ListRulesets(ctx, workspace, 50, 0)
 			if err != nil {
-				t.Fatalf("ListRulesets ns=%q: %v", ns, err)
+				t.Fatalf("ListRulesets workspace=%q: %v", workspace, err)
 			}
 			if len(list) != 1 {
-				t.Errorf("ListRulesets ns=%q: got %d results, want 1", ns, len(list))
+				t.Errorf("ListRulesets workspace=%q: got %d results, want 1", workspace, len(list))
 			}
 		}
 
-		// Versions are also namespace-scoped.
+		// Versions are also workspace-scoped.
 		dsl := json.RawMessage(`{"dsl_version":"v1","strategy":"first_match","schema":{},"rules":[]}`)
-		for _, ns := range []string{"ns-alpha", "ns-beta"} {
+		for _, workspace := range []string{"workspace-alpha", "workspace-beta"} {
 			if err := s.CreateVersion(ctx, &domain.Version{
-				Namespace:  ns,
+				Workspace:  workspace,
 				RulesetKey: key,
 				Version:    1,
-				Checksum:   "sha256:" + ns,
+				Checksum:   "sha256:" + workspace,
 				DSL:        dsl,
 				CreatedAt:  now,
 			}); err != nil {
-				t.Fatalf("CreateVersion ns=%q: %v", ns, err)
+				t.Fatalf("CreateVersion workspace=%q: %v", workspace, err)
 			}
 		}
 
-		// Each namespace has exactly one version.
-		for _, ns := range []string{"ns-alpha", "ns-beta"} {
-			versions, err := s.ListVersions(ctx, ns, key, 50, 0)
+		// Each workspace has exactly one version.
+		for _, workspace := range []string{"workspace-alpha", "workspace-beta"} {
+			versions, err := s.ListVersions(ctx, workspace, key, 50, 0)
 			if err != nil {
-				t.Fatalf("ListVersions ns=%q: %v", ns, err)
+				t.Fatalf("ListVersions workspace=%q: %v", workspace, err)
 			}
 			if len(versions) != 1 {
-				t.Errorf("ListVersions ns=%q: got %d, want 1", ns, len(versions))
+				t.Errorf("ListVersions workspace=%q: got %d, want 1", workspace, len(versions))
 			}
-			if versions[0].Checksum != "sha256:"+ns {
-				t.Errorf("ListVersions ns=%q: Checksum=%q, want %q",
-					ns, versions[0].Checksum, "sha256:"+ns)
+			if versions[0].Checksum != "sha256:"+workspace {
+				t.Errorf("ListVersions workspace=%q: Checksum=%q, want %q",
+					workspace, versions[0].Checksum, "sha256:"+workspace)
 			}
 		}
 	})

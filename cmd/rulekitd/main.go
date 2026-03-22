@@ -102,12 +102,14 @@ func main() {
 	rulesetSvc := service.NewRulesetService(db, blobs)
 	authSvc := service.NewAuthService(db, m, []byte(cfg.JWTSecret), cfg.AdminPassword)
 	adminSvc := service.NewAdminService(db)
+	workspaceSvc := service.NewWorkspaceService(db)
 
 	rulesetHandler := handler.NewRulesetHandler(rulesetSvc)
 	authHandler := handler.NewAuthHandler(authSvc)
 	adminHandler := handler.NewAdminHandler(adminSvc)
+	workspaceHandler := handler.NewWorkspaceHandler(workspaceSvc)
 
-	httpHandler := httpadapter.NewRouter(rulesetHandler, authHandler, adminHandler, db, cfg, startTime)
+	httpHandler := httpadapter.NewRouter(rulesetHandler, authHandler, adminHandler, workspaceHandler, db, cfg, startTime)
 
 	srv := &http.Server{
 		Addr:         cfg.Addr,
