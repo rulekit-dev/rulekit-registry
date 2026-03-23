@@ -5,12 +5,12 @@
   },
   "variable": [
     { "key": "base_url", "value": "http://localhost:8080" },
-    { "key": "namespace", "value": "default" },
+    { "key": "workspace", "value": "default" },
     { "key": "ruleset_key", "value": "pricing" },
     { "key": "access_token", "value": "" },
     { "key": "refresh_token", "value": "" },
     { "key": "user_id", "value": "" },
-    { "key": "token_id", "value": "" }
+    { "key": "key_id", "value": "" }
   ],
   "auth": {
     "type": "bearer",
@@ -23,6 +23,7 @@
         {
           "name": "Health check",
           "request": {
+            "auth": { "type": "noauth" },
             "method": "GET",
             "url": "{{base_url}}/healthz"
           }
@@ -33,6 +34,30 @@
       "name": "Auth",
       "item": [
         {
+          "name": "Admin login",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "var r = pm.response.json();",
+                  "if (r.access_token) pm.collectionVariables.set('access_token', r.access_token);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "POST",
+            "url": "{{base_url}}/v1/auth/login",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"admin\",\n  \"password\": \"your-admin-password\"\n}"
+            }
+          }
+        },
+        {
           "name": "Request OTP",
           "request": {
             "auth": { "type": "noauth" },
@@ -41,7 +66,7 @@
             "header": [{ "key": "Content-Type", "value": "application/json" }],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"email\": \"admin@example.com\"\n}"
+              "raw": "{\n  \"email\": \"alice@example.com\"\n}"
             }
           }
         },
@@ -66,7 +91,7 @@
             "header": [{ "key": "Content-Type", "value": "application/json" }],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"email\": \"admin@example.com\",\n  \"code\": \"123456\"\n}"
+              "raw": "{\n  \"email\": \"alice@example.com\",\n  \"code\": \"123456\"\n}"
             }
           }
         },
@@ -85,6 +110,7 @@
             }
           ],
           "request": {
+            "auth": { "type": "noauth" },
             "method": "POST",
             "url": "{{base_url}}/v1/auth/refresh",
             "header": [{ "key": "Content-Type", "value": "application/json" }],
@@ -109,6 +135,52 @@
       ]
     },
     {
+      "name": "Workspaces",
+      "item": [
+        {
+          "name": "List workspaces",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{base_url}}/v1/workspaces?limit=50&offset=0",
+              "host": ["{{base_url}}"],
+              "path": ["v1", "workspaces"],
+              "query": [
+                { "key": "limit", "value": "50" },
+                { "key": "offset", "value": "0" }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Create workspace",
+          "request": {
+            "method": "POST",
+            "url": "{{base_url}}/v1/workspaces",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"{{workspace}}\",\n  \"description\": \"My workspace\"\n}"
+            }
+          }
+        },
+        {
+          "name": "Get workspace",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/v1/workspaces/{{workspace}}"
+          }
+        },
+        {
+          "name": "Delete workspace",
+          "request": {
+            "method": "DELETE",
+            "url": "{{base_url}}/v1/workspaces/{{workspace}}"
+          }
+        }
+      ]
+    },
+    {
       "name": "Rulesets",
       "item": [
         {
@@ -116,10 +188,14 @@
           "request": {
             "method": "GET",
             "url": {
-              "raw": "{{base_url}}/v1/rulesets?namespace={{namespace}}",
+              "raw": "{{base_url}}/v1/rulesets?workspace={{workspace}}&limit=50&offset=0",
               "host": ["{{base_url}}"],
               "path": ["v1", "rulesets"],
-              "query": [{ "key": "namespace", "value": "{{namespace}}" }]
+              "query": [
+                { "key": "workspace", "value": "{{workspace}}" },
+                { "key": "limit", "value": "50" },
+                { "key": "offset", "value": "0" }
+              ]
             }
           }
         },
@@ -131,7 +207,7 @@
             "header": [{ "key": "Content-Type", "value": "application/json" }],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"namespace\": \"{{namespace}}\",\n  \"key\": \"{{ruleset_key}}\",\n  \"name\": \"Pricing Rules\"\n}"
+              "raw": "{\n  \"workspace\": \"{{workspace}}\",\n  \"key\": \"{{ruleset_key}}\",\n  \"name\": \"Pricing Rules\",\n  \"description\": \"Rules for pricing decisions\"\n}"
             }
           }
         },
@@ -140,10 +216,10 @@
           "request": {
             "method": "GET",
             "url": {
-              "raw": "{{base_url}}/v1/rulesets/{{ruleset_key}}?namespace={{namespace}}",
+              "raw": "{{base_url}}/v1/rulesets/{{ruleset_key}}?workspace={{workspace}}",
               "host": ["{{base_url}}"],
               "path": ["v1", "rulesets", "{{ruleset_key}}"],
-              "query": [{ "key": "namespace", "value": "{{namespace}}" }]
+              "query": [{ "key": "workspace", "value": "{{workspace}}" }]
             }
           }
         },
@@ -152,10 +228,10 @@
           "request": {
             "method": "DELETE",
             "url": {
-              "raw": "{{base_url}}/v1/rulesets/{{ruleset_key}}?namespace={{namespace}}",
+              "raw": "{{base_url}}/v1/rulesets/{{ruleset_key}}?workspace={{workspace}}",
               "host": ["{{base_url}}"],
               "path": ["v1", "rulesets", "{{ruleset_key}}"],
-              "query": [{ "key": "namespace", "value": "{{namespace}}" }]
+              "query": [{ "key": "workspace", "value": "{{workspace}}" }]
             }
           }
         }
@@ -169,10 +245,10 @@
           "request": {
             "method": "GET",
             "url": {
-              "raw": "{{base_url}}/v1/rulesets/{{ruleset_key}}/draft?namespace={{namespace}}",
+              "raw": "{{base_url}}/v1/rulesets/{{ruleset_key}}/draft?workspace={{workspace}}",
               "host": ["{{base_url}}"],
               "path": ["v1", "rulesets", "{{ruleset_key}}", "draft"],
-              "query": [{ "key": "namespace", "value": "{{namespace}}" }]
+              "query": [{ "key": "workspace", "value": "{{workspace}}" }]
             }
           }
         },
@@ -181,32 +257,32 @@
           "request": {
             "method": "PUT",
             "url": {
-              "raw": "{{base_url}}/v1/rulesets/{{ruleset_key}}/draft?namespace={{namespace}}",
+              "raw": "{{base_url}}/v1/rulesets/{{ruleset_key}}/draft?workspace={{workspace}}",
               "host": ["{{base_url}}"],
               "path": ["v1", "rulesets", "{{ruleset_key}}", "draft"],
-              "query": [{ "key": "namespace", "value": "{{namespace}}" }]
+              "query": [{ "key": "workspace", "value": "{{workspace}}" }]
             },
             "header": [{ "key": "Content-Type", "value": "application/json" }],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"dsl\": {\n    \"dsl_version\": \"v1\",\n    \"strategy\": \"first_match\",\n    \"schema\": {\n      \"amount\":   { \"type\": \"number\" },\n      \"currency\": { \"type\": \"enum\", \"options\": [\"IDR\", \"USD\"] },\n      \"weekend\":  { \"type\": \"boolean\" }\n    },\n    \"rules\": [\n      {\n        \"id\": \"r1\",\n        \"name\": \"High amount\",\n        \"when\": [{ \"field\": \"amount\", \"op\": \"gt\", \"value\": 50000000 }],\n        \"then\": { \"decision\": \"manual_review\" }\n      },\n      {\n        \"id\": \"r2\",\n        \"name\": \"Weekend surcharge\",\n        \"when\": [{ \"field\": \"weekend\", \"op\": \"eq\", \"value\": true }],\n        \"then\": { \"decision\": \"surcharge\" }\n      }\n    ],\n    \"default\": { \"decision\": \"approve\" }\n  }\n}"
+              "raw": "{\n  \"dsl\": {\n    \"dsl_version\": \"v1\",\n    \"strategy\": \"first_match\",\n    \"schema\": {\n      \"amount\":   { \"type\": \"number\" },\n      \"currency\": { \"type\": \"enum\", \"options\": [\"IDR\", \"USD\"] },\n      \"weekend\":  { \"type\": \"boolean\" }\n    },\n    \"rules\": [\n      {\n        \"id\": \"r1\",\n        \"name\": \"High amount\",\n        \"when\": [{ \"field\": \"amount\", \"op\": \"gt\", \"value\": 50000000 }],\n        \"then\": { \"decision\": \"manual_review\" }\n      },\n      {\n        \"id\": \"r2\",\n        \"name\": \"Weekend surcharge\",\n        \"when\": [{ \"field\": \"weekend\", \"op\": \"eq\", \"value\": true }],\n        \"then\": { \"decision\": \"surcharge\" }\n      },\n      {\n        \"id\": \"r3\",\n        \"name\": \"USD payment\",\n        \"when\": [{ \"field\": \"currency\", \"op\": \"eq\", \"value\": \"USD\" }],\n        \"then\": { \"decision\": \"fx_review\" }\n      }\n    ],\n    \"default\": { \"decision\": \"approve\" }\n  }\n}"
             }
           }
         },
         {
-          "name": "Update draft DSL (invalid)",
+          "name": "Update draft DSL (invalid — unknown field)",
           "request": {
             "method": "PUT",
             "url": {
-              "raw": "{{base_url}}/v1/rulesets/{{ruleset_key}}/draft?namespace={{namespace}}",
+              "raw": "{{base_url}}/v1/rulesets/{{ruleset_key}}/draft?workspace={{workspace}}",
               "host": ["{{base_url}}"],
               "path": ["v1", "rulesets", "{{ruleset_key}}", "draft"],
-              "query": [{ "key": "namespace", "value": "{{namespace}}" }]
+              "query": [{ "key": "workspace", "value": "{{workspace}}" }]
             },
             "header": [{ "key": "Content-Type", "value": "application/json" }],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"dsl\": {\n    \"dsl_version\": \"v1\",\n    \"strategy\": \"first_match\",\n    \"schema\": {\n      \"amount\": { \"type\": \"number\" }\n    },\n    \"rules\": [\n      {\n        \"id\": \"r1\",\n        \"name\": \"Bad rule\",\n        \"when\": [{ \"field\": \"nonexistent_field\", \"op\": \"gt\", \"value\": 100 }],\n        \"then\": { \"decision\": \"fail\" }\n      }\n    ],\n    \"default\": { \"decision\": \"ok\" }\n  }\n}"
+              "raw": "{\n  \"dsl\": {\n    \"dsl_version\": \"v1\",\n    \"strategy\": \"first_match\",\n    \"schema\": {\n      \"amount\": { \"type\": \"number\" }\n    },\n    \"rules\": [\n      {\n        \"id\": \"r1\",\n        \"name\": \"Bad rule\",\n        \"when\": [{ \"field\": \"nonexistent_field\", \"op\": \"gt\", \"value\": 100 }],\n        \"then\": { \"decision\": \"fail\" }\n      }\n    ]\n  }\n}"
             }
           }
         },
@@ -215,10 +291,10 @@
           "request": {
             "method": "DELETE",
             "url": {
-              "raw": "{{base_url}}/v1/rulesets/{{ruleset_key}}/draft?namespace={{namespace}}",
+              "raw": "{{base_url}}/v1/rulesets/{{ruleset_key}}/draft?workspace={{workspace}}",
               "host": ["{{base_url}}"],
               "path": ["v1", "rulesets", "{{ruleset_key}}", "draft"],
-              "query": [{ "key": "namespace", "value": "{{namespace}}" }]
+              "query": [{ "key": "workspace", "value": "{{workspace}}" }]
             }
           }
         }
@@ -232,10 +308,10 @@
           "request": {
             "method": "POST",
             "url": {
-              "raw": "{{base_url}}/v1/rulesets/{{ruleset_key}}/publish?namespace={{namespace}}",
+              "raw": "{{base_url}}/v1/rulesets/{{ruleset_key}}/publish?workspace={{workspace}}",
               "host": ["{{base_url}}"],
               "path": ["v1", "rulesets", "{{ruleset_key}}", "publish"],
-              "query": [{ "key": "namespace", "value": "{{namespace}}" }]
+              "query": [{ "key": "workspace", "value": "{{workspace}}" }]
             }
           }
         }
@@ -249,10 +325,14 @@
           "request": {
             "method": "GET",
             "url": {
-              "raw": "{{base_url}}/v1/rulesets/{{ruleset_key}}/versions?namespace={{namespace}}",
+              "raw": "{{base_url}}/v1/rulesets/{{ruleset_key}}/versions?workspace={{workspace}}&limit=50&offset=0",
               "host": ["{{base_url}}"],
               "path": ["v1", "rulesets", "{{ruleset_key}}", "versions"],
-              "query": [{ "key": "namespace", "value": "{{namespace}}" }]
+              "query": [
+                { "key": "workspace", "value": "{{workspace}}" },
+                { "key": "limit", "value": "50" },
+                { "key": "offset", "value": "0" }
+              ]
             }
           }
         },
@@ -261,10 +341,10 @@
           "request": {
             "method": "GET",
             "url": {
-              "raw": "{{base_url}}/v1/rulesets/{{ruleset_key}}/versions/latest?namespace={{namespace}}",
+              "raw": "{{base_url}}/v1/rulesets/{{ruleset_key}}/versions/latest?workspace={{workspace}}",
               "host": ["{{base_url}}"],
               "path": ["v1", "rulesets", "{{ruleset_key}}", "versions", "latest"],
-              "query": [{ "key": "namespace", "value": "{{namespace}}" }]
+              "query": [{ "key": "workspace", "value": "{{workspace}}" }]
             }
           }
         },
@@ -273,10 +353,10 @@
           "request": {
             "method": "GET",
             "url": {
-              "raw": "{{base_url}}/v1/rulesets/{{ruleset_key}}/versions/1?namespace={{namespace}}",
+              "raw": "{{base_url}}/v1/rulesets/{{ruleset_key}}/versions/1?workspace={{workspace}}",
               "host": ["{{base_url}}"],
               "path": ["v1", "rulesets", "{{ruleset_key}}", "versions", "1"],
-              "query": [{ "key": "namespace", "value": "{{namespace}}" }]
+              "query": [{ "key": "workspace", "value": "{{workspace}}" }]
             }
           }
         },
@@ -285,10 +365,10 @@
           "request": {
             "method": "GET",
             "url": {
-              "raw": "{{base_url}}/v1/rulesets/{{ruleset_key}}/versions/latest/bundle?namespace={{namespace}}",
+              "raw": "{{base_url}}/v1/rulesets/{{ruleset_key}}/versions/latest/bundle?workspace={{workspace}}",
               "host": ["{{base_url}}"],
               "path": ["v1", "rulesets", "{{ruleset_key}}", "versions", "latest", "bundle"],
-              "query": [{ "key": "namespace", "value": "{{namespace}}" }]
+              "query": [{ "key": "workspace", "value": "{{workspace}}" }]
             }
           }
         },
@@ -297,10 +377,10 @@
           "request": {
             "method": "GET",
             "url": {
-              "raw": "{{base_url}}/v1/rulesets/{{ruleset_key}}/versions/1/bundle?namespace={{namespace}}",
+              "raw": "{{base_url}}/v1/rulesets/{{ruleset_key}}/versions/1/bundle?workspace={{workspace}}",
               "host": ["{{base_url}}"],
               "path": ["v1", "rulesets", "{{ruleset_key}}", "versions", "1", "bundle"],
-              "query": [{ "key": "namespace", "value": "{{namespace}}" }]
+              "query": [{ "key": "workspace", "value": "{{workspace}}" }]
             }
           }
         }
@@ -316,7 +396,15 @@
               "name": "List users",
               "request": {
                 "method": "GET",
-                "url": "{{base_url}}/v1/admin/users"
+                "url": {
+                  "raw": "{{base_url}}/v1/admin/users?limit=50&offset=0",
+                  "host": ["{{base_url}}"],
+                  "path": ["v1", "admin", "users"],
+                  "query": [
+                    { "key": "limit", "value": "50" },
+                    { "key": "offset", "value": "0" }
+                  ]
+                }
               }
             },
             {
@@ -339,69 +427,72 @@
               }
             },
             {
-              "name": "Set role on namespace",
+              "name": "Set role on workspace",
               "request": {
                 "method": "PUT",
-                "url": "{{base_url}}/v1/admin/users/{{user_id}}/roles/{{namespace}}",
+                "url": "{{base_url}}/v1/admin/users/{{user_id}}/roles/{{workspace}}",
                 "header": [{ "key": "Content-Type", "value": "application/json" }],
                 "body": {
                   "mode": "raw",
-                  "raw": "{\n  \"role_mask\": 2\n}"
+                  "raw": "{\n  \"role_mask\": 3\n}"
                 }
               }
             },
             {
-              "name": "Remove role on namespace",
+              "name": "Remove role on workspace",
               "request": {
                 "method": "DELETE",
-                "url": "{{base_url}}/v1/admin/users/{{user_id}}/roles/{{namespace}}"
+                "url": "{{base_url}}/v1/admin/users/{{user_id}}/roles/{{workspace}}"
               }
             }
           ]
         },
         {
-          "name": "API Tokens",
+          "name": "API Keys",
           "item": [
             {
-              "name": "Issue token",
+              "name": "Create API key",
               "event": [
                 {
                   "listen": "test",
                   "script": {
                     "exec": [
                       "var r = pm.response.json();",
-                      "if (r.id) pm.collectionVariables.set('token_id', r.id);"
+                      "if (r.id) pm.collectionVariables.set('key_id', r.id);"
                     ]
                   }
                 }
               ],
               "request": {
                 "method": "POST",
-                "url": "{{base_url}}/v1/admin/tokens",
+                "url": "{{base_url}}/v1/admin/keys",
                 "header": [{ "key": "Content-Type", "value": "application/json" }],
                 "body": {
                   "mode": "raw",
-                  "raw": "{\n  \"user_id\": \"{{user_id}}\",\n  \"name\": \"ci-pipeline\",\n  \"namespace\": \"{{namespace}}\",\n  \"role\": 2,\n  \"expires_in_days\": 90\n}"
+                  "raw": "{\n  \"name\": \"ci-pipeline\",\n  \"workspace\": \"{{workspace}}\",\n  \"role\": 3,\n  \"expires_in_days\": 90\n}"
                 }
               }
             },
             {
-              "name": "List tokens",
+              "name": "List API keys",
               "request": {
                 "method": "GET",
                 "url": {
-                  "raw": "{{base_url}}/v1/admin/tokens?user_id={{user_id}}",
+                  "raw": "{{base_url}}/v1/admin/keys?limit=50&offset=0",
                   "host": ["{{base_url}}"],
-                  "path": ["v1", "admin", "tokens"],
-                  "query": [{ "key": "user_id", "value": "{{user_id}}" }]
+                  "path": ["v1", "admin", "keys"],
+                  "query": [
+                    { "key": "limit", "value": "50" },
+                    { "key": "offset", "value": "0" }
+                  ]
                 }
               }
             },
             {
-              "name": "Revoke token",
+              "name": "Revoke API key",
               "request": {
                 "method": "DELETE",
-                "url": "{{base_url}}/v1/admin/tokens/{{token_id}}"
+                "url": "{{base_url}}/v1/admin/keys/{{key_id}}"
               }
             }
           ]
