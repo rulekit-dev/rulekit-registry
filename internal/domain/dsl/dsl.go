@@ -42,12 +42,30 @@ type Rule struct {
 	Then map[string]any `json:"then"`
 }
 
+// RuleNode is a self-contained evaluation unit on the canvas.
+// It has its own input schema, strategy, and rules.
+type RuleNode struct {
+	ID       string              `json:"id"`
+	Strategy Strategy            `json:"strategy"`
+	Schema   map[string]FieldDef `json:"schema"`
+	Rules    []Rule              `json:"rules"`
+	Default  map[string]any      `json:"default,omitempty"`
+}
+
+// Edge connects two nodes on the canvas.
+// Map optionally describes how output fields from the source node
+// become input fields on the destination node (output key -> input key).
+type Edge struct {
+	From string            `json:"from"`
+	To   string            `json:"to"`
+	Map  map[string]string `json:"map,omitempty"`
+}
+
 type DSL struct {
-	DSLVersion string              `json:"dsl_version"`
-	Strategy   Strategy            `json:"strategy"`
-	Schema     map[string]FieldDef `json:"schema"`
-	Rules      []Rule              `json:"rules"`
-	Default    map[string]any      `json:"default,omitempty"`
+	DSLVersion string     `json:"dsl_version"`
+	Entry      string     `json:"entry"`
+	Nodes      []RuleNode `json:"nodes"`
+	Edges      []Edge     `json:"edges,omitempty"`
 }
 
 var validOps = map[FieldType]map[string]bool{
@@ -79,39 +97,81 @@ func Validate(d *DSL) error {
 	if d.DSLVersion != "v1" {
 		return fmt.Errorf("dsl: unsupported dsl_version %q, expected \"v1\"", d.DSLVersion)
 	}
-	if d.Strategy != StrategyFirstMatch && d.Strategy != StrategyAllMatches {
-		return fmt.Errorf("dsl: unknown strategy %q", d.Strategy)
+	if d.Entry == "" {
+		return fmt.Errorf("dsl: entry must not be empty")
 	}
-	if len(d.Schema) == 0 {
-		return fmt.Errorf("dsl: schema must not be empty")
+	if len(d.Nodes) == 0 {
+		return fmt.Errorf("dsl: nodes must not be empty")
 	}
 
-	for fieldName, fd := range d.Schema {
-		if err := validateFieldDef(fieldName, fd); err != nil {
+	nodeIDs := make(map[string]bool, len(d.Nodes))
+	for i, node := range d.Nodes {
+		if node.ID == "" {
+			return fmt.Errorf("dsl: nodes[%d] missing id", i)
+		}
+		if nodeIDs[node.ID] {
+			return fmt.Errorf("dsl: duplicate node id %q", node.ID)
+		}
+		nodeIDs[node.ID] = true
+
+		if err := validateNode(node); err != nil {
 			return err
 		}
 	}
 
-	seenIDs := make(map[string]bool, len(d.Rules))
-	for i, rule := range d.Rules {
+	if !nodeIDs[d.Entry] {
+		return fmt.Errorf("dsl: entry %q does not reference a valid node id", d.Entry)
+	}
+
+	for i, edge := range d.Edges {
+		if !nodeIDs[edge.From] {
+			return fmt.Errorf("dsl: edges[%d] from %q does not reference a valid node id", i, edge.From)
+		}
+		if !nodeIDs[edge.To] {
+			return fmt.Errorf("dsl: edges[%d] to %q does not reference a valid node id", i, edge.To)
+		}
+		if edge.From == edge.To {
+			return fmt.Errorf("dsl: edges[%d] self-loop on node %q", i, edge.From)
+		}
+	}
+
+	return nil
+}
+
+func validateNode(node RuleNode) error {
+	if node.Strategy != StrategyFirstMatch && node.Strategy != StrategyAllMatches {
+		return fmt.Errorf("dsl: node %q has unknown strategy %q", node.ID, node.Strategy)
+	}
+	if len(node.Schema) == 0 {
+		return fmt.Errorf("dsl: node %q schema must not be empty", node.ID)
+	}
+
+	for fieldName, fd := range node.Schema {
+		if err := validateFieldDef(node.ID, fieldName, fd); err != nil {
+			return err
+		}
+	}
+
+	seenIDs := make(map[string]bool, len(node.Rules))
+	for i, rule := range node.Rules {
 		if rule.ID == "" {
-			return fmt.Errorf("dsl: rule[%d] missing id", i)
+			return fmt.Errorf("dsl: node %q rules[%d] missing id", node.ID, i)
 		}
 		if seenIDs[rule.ID] {
-			return fmt.Errorf("dsl: duplicate rule id %q", rule.ID)
+			return fmt.Errorf("dsl: node %q duplicate rule id %q", node.ID, rule.ID)
 		}
 		seenIDs[rule.ID] = true
 
 		if len(rule.When) == 0 {
-			return fmt.Errorf("dsl: rule %q has no conditions", rule.ID)
+			return fmt.Errorf("dsl: node %q rule %q has no conditions", node.ID, rule.ID)
 		}
 		for j, cond := range rule.When {
-			if err := validateCondition(fmt.Sprintf("rule %q condition[%d]", rule.ID, j), cond, d.Schema); err != nil {
+			if err := validateCondition(fmt.Sprintf("node %q rule %q condition[%d]", node.ID, rule.ID, j), cond, node.Schema); err != nil {
 				return err
 			}
 		}
 		if len(rule.Then) == 0 {
-			return fmt.Errorf("dsl: rule %q has empty then clause", rule.ID)
+			return fmt.Errorf("dsl: node %q rule %q has empty then clause", node.ID, rule.ID)
 		}
 	}
 
@@ -129,16 +189,16 @@ func ParseAndValidate(data []byte) (*DSL, error) {
 	return d, nil
 }
 
-func validateFieldDef(name string, fd FieldDef) error {
+func validateFieldDef(nodeID, name string, fd FieldDef) error {
 	switch fd.Type {
 	case FieldTypeNumber, FieldTypeString, FieldTypeBoolean:
 		// valid
 	case FieldTypeEnum:
 		if len(fd.Options) == 0 {
-			return fmt.Errorf("dsl: field %q is type enum but has no options", name)
+			return fmt.Errorf("dsl: node %q field %q is type enum but has no options", nodeID, name)
 		}
 	default:
-		return fmt.Errorf("dsl: field %q has unknown type %q", name, fd.Type)
+		return fmt.Errorf("dsl: node %q field %q has unknown type %q", nodeID, name, fd.Type)
 	}
 	return nil
 }

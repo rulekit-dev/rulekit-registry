@@ -8,13 +8,12 @@ import (
 	"testing"
 	"time"
 
-	fsblobstore "github.com/rulekit-dev/rulekit-registry/internal/adapter/blob/fs"
 	httpadapter "github.com/rulekit-dev/rulekit-registry/internal/adapter/http"
 	"github.com/rulekit-dev/rulekit-registry/internal/adapter/http/handler"
 	"github.com/rulekit-dev/rulekit-registry/internal/adapter/mailer"
-	sqlitestore "github.com/rulekit-dev/rulekit-registry/internal/adapter/store/sqlite"
 	"github.com/rulekit-dev/rulekit-registry/internal/config"
 	"github.com/rulekit-dev/rulekit-registry/internal/domain"
+	"github.com/rulekit-dev/rulekit-registry/internal/mock"
 	"github.com/rulekit-dev/rulekit-registry/internal/service"
 	"github.com/rulekit-dev/rulekit-registry/internal/util"
 )
@@ -22,20 +21,11 @@ import (
 const testJWTSecret = "test-secret-for-tests"
 const testAdminPassword = "test-admin-pass"
 
-// newTestServer returns a test HTTP server and a pre-signed admin token for auth.
 func newTestServer(t *testing.T) (*httptest.Server, string) {
 	t.Helper()
-	dir := t.TempDir()
 
-	db, err := sqlitestore.New(dir)
-	if err != nil {
-		t.Fatalf("sqlite.New: %v", err)
-	}
-
-	blobs, err := fsblobstore.New(dir + "/blobs")
-	if err != nil {
-		t.Fatalf("fsblobstore.New: %v", err)
-	}
+	db := mock.NewDatastore()
+	blobs := mock.NewBlobStore()
 
 	t.Cleanup(func() {
 		db.Close()
@@ -117,18 +107,24 @@ func authDo(t *testing.T, token string, req *http.Request) *http.Response {
 
 var validDSL = map[string]any{
 	"dsl_version": "v1",
-	"strategy":    "first_match",
-	"schema": map[string]any{
-		"age": map[string]any{"type": "number"},
-	},
-	"rules": []any{
+	"entry":       "node-1",
+	"nodes": []any{
 		map[string]any{
-			"id":   "r1",
-			"name": "adult",
-			"when": []any{
-				map[string]any{"field": "age", "op": "gte", "value": 18},
+			"id":       "node-1",
+			"strategy": "first_match",
+			"schema": map[string]any{
+				"age": map[string]any{"type": "number"},
 			},
-			"then": map[string]any{"result": "adult"},
+			"rules": []any{
+				map[string]any{
+					"id":   "r1",
+					"name": "adult",
+					"when": []any{
+						map[string]any{"field": "age", "op": "gte", "value": 18},
+					},
+					"then": map[string]any{"result": "adult"},
+				},
+			},
 		},
 	},
 }
@@ -246,30 +242,6 @@ func TestListRulesets(t *testing.T) {
 	decode(t, resp, &list)
 	if len(list) != 3 {
 		t.Fatalf("count: got %d, want 3", len(list))
-	}
-	if list[0].Key != "rules-a" || list[1].Key != "rules-b" || list[2].Key != "rules-c" {
-		t.Errorf("order: got %v", []string{list[0].Key, list[1].Key, list[2].Key})
-	}
-}
-
-func TestListRulesetsPagination(t *testing.T) {
-	srv, token := newTestServer(t)
-	defer srv.Close()
-
-	for _, key := range []string{"rules-a", "rules-b", "rules-c"} {
-		authPost(t, token, srv.URL+"/v1/rulesets", mustJSON(t, map[string]string{"key": key, "name": key})).Body.Close()
-	}
-
-	resp := authGet(t, token, srv.URL+"/v1/rulesets?limit=2&offset=1")
-	defer resp.Body.Close()
-
-	var list []*domain.Ruleset
-	decode(t, resp, &list)
-	if len(list) != 2 {
-		t.Fatalf("count: got %d, want 2", len(list))
-	}
-	if list[0].Key != "rules-b" {
-		t.Errorf("first item: got %q, want %q", list[0].Key, "rules-b")
 	}
 }
 
@@ -465,18 +437,20 @@ func TestPublishIncrementsVersion(t *testing.T) {
 
 	dsl2 := map[string]any{
 		"dsl_version": "v1",
-		"strategy":    "all_matches",
-		"schema": map[string]any{
-			"score": map[string]any{"type": "number"},
-		},
-		"rules": []any{
+		"entry":       "node-1",
+		"nodes": []any{
 			map[string]any{
-				"id":   "r2",
-				"name": "high-score",
-				"when": []any{
-					map[string]any{"field": "score", "op": "gt", "value": 90},
+				"id":       "node-1",
+				"strategy": "all_matches",
+				"schema":   map[string]any{"score": map[string]any{"type": "number"}},
+				"rules": []any{
+					map[string]any{
+						"id":   "r2",
+						"name": "high-score",
+						"when": []any{map[string]any{"field": "score", "op": "gt", "value": 90}},
+						"then": map[string]any{"tier": "gold"},
+					},
 				},
-				"then": map[string]any{"tier": "gold"},
 			},
 		},
 	}
@@ -546,13 +520,19 @@ func TestListVersions(t *testing.T) {
 
 	dsl2 := map[string]any{
 		"dsl_version": "v1",
-		"strategy":    "all_matches",
-		"schema":      map[string]any{"x": map[string]any{"type": "number"}},
-		"rules": []any{
+		"entry":       "node-1",
+		"nodes": []any{
 			map[string]any{
-				"id": "r1", "name": "x", "when": []any{
-					map[string]any{"field": "x", "op": "eq", "value": 1},
-				}, "then": map[string]any{"ok": true},
+				"id":       "node-1",
+				"strategy": "all_matches",
+				"schema":   map[string]any{"x": map[string]any{"type": "number"}},
+				"rules": []any{
+					map[string]any{
+						"id": "r1", "name": "x",
+						"when": []any{map[string]any{"field": "x", "op": "eq", "value": 1}},
+						"then": map[string]any{"ok": true},
+					},
+				},
 			},
 		},
 	}

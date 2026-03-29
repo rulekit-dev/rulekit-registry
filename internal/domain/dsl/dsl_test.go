@@ -11,27 +11,33 @@ import (
 func validDSLBytes() []byte {
 	d := map[string]any{
 		"dsl_version": "v1",
-		"strategy":    "first_match",
-		"schema": map[string]any{
-			"age":    map[string]any{"type": "number"},
-			"name":   map[string]any{"type": "string"},
-			"active": map[string]any{"type": "boolean"},
-			"status": map[string]any{
-				"type":    "enum",
-				"options": []string{"pending", "active", "closed"},
-			},
-		},
-		"rules": []any{
+		"entry":       "node-1",
+		"nodes": []any{
 			map[string]any{
-				"id":   "rule-1",
-				"name": "Adult active user",
-				"when": []any{
-					map[string]any{"field": "age", "op": "gte", "value": 18},
-					map[string]any{"field": "active", "op": "eq", "value": true},
-					map[string]any{"field": "name", "op": "starts_with", "value": "A"},
-					map[string]any{"field": "status", "op": "eq", "value": "active"},
+				"id":       "node-1",
+				"strategy": "first_match",
+				"schema": map[string]any{
+					"age":    map[string]any{"type": "number"},
+					"name":   map[string]any{"type": "string"},
+					"active": map[string]any{"type": "boolean"},
+					"status": map[string]any{
+						"type":    "enum",
+						"options": []string{"pending", "active", "closed"},
+					},
 				},
-				"then": map[string]any{"result": "approved"},
+				"rules": []any{
+					map[string]any{
+						"id":   "rule-1",
+						"name": "Adult active user",
+						"when": []any{
+							map[string]any{"field": "age", "op": "gte", "value": 18},
+							map[string]any{"field": "active", "op": "eq", "value": true},
+							map[string]any{"field": "name", "op": "starts_with", "value": "A"},
+							map[string]any{"field": "status", "op": "eq", "value": "active"},
+						},
+						"then": map[string]any{"result": "approved"},
+					},
+				},
 			},
 		},
 	}
@@ -49,16 +55,62 @@ func TestValidDSL(t *testing.T) {
 	}
 }
 
+func TestMultiNodeWithEdge(t *testing.T) {
+	d := map[string]any{
+		"dsl_version": "v1",
+		"entry":       "eligibility",
+		"nodes": []any{
+			map[string]any{
+				"id":       "eligibility",
+				"strategy": "first_match",
+				"schema":   map[string]any{"age": map[string]any{"type": "number"}},
+				"rules": []any{
+					map[string]any{
+						"id": "r1", "name": "adult",
+						"when": []any{map[string]any{"field": "age", "op": "gte", "value": 18}},
+						"then": map[string]any{"eligible": true},
+					},
+				},
+			},
+			map[string]any{
+				"id":       "pricing",
+				"strategy": "all_matches",
+				"schema":   map[string]any{"score": map[string]any{"type": "number"}},
+				"rules": []any{
+					map[string]any{
+						"id": "r2", "name": "high-score",
+						"when": []any{map[string]any{"field": "score", "op": "gt", "value": 90}},
+						"then": map[string]any{"tier": "gold"},
+					},
+				},
+			},
+		},
+		"edges": []any{
+			map[string]any{"from": "eligibility", "to": "pricing", "map": map[string]any{"score": "credit_score"}},
+		},
+	}
+	b, _ := json.Marshal(d)
+	_, err := dsl.ParseAndValidate(b)
+	if err != nil {
+		t.Fatalf("expected no error for multi-node DSL, got: %v", err)
+	}
+}
+
 func TestUnknownDSLVersion(t *testing.T) {
 	d := map[string]any{
 		"dsl_version": "v2",
-		"strategy":    "first_match",
-		"schema":      map[string]any{"x": map[string]any{"type": "number"}},
-		"rules": []any{
+		"entry":       "node-1",
+		"nodes": []any{
 			map[string]any{
-				"id": "r1", "name": "rule",
-				"when": []any{map[string]any{"field": "x", "op": "eq", "value": 1}},
-				"then": map[string]any{"result": "ok"},
+				"id": "node-1", "strategy": "first_match",
+				"schema": map[string]any{"x": map[string]any{"type": "number"}},
+				"rules": []any{
+					map[string]any{
+						"id": "r1", "name": "rule",
+						"when": []any{map[string]any{"field": "x", "op": "eq", "value": 1}},
+						"then": map[string]any{"result": "ok"},
+					},
+				},
 			},
 		},
 	}
@@ -72,16 +124,129 @@ func TestUnknownDSLVersion(t *testing.T) {
 	}
 }
 
-func TestUnknownFieldReference(t *testing.T) {
+func TestMissingEntry(t *testing.T) {
 	d := map[string]any{
 		"dsl_version": "v1",
-		"strategy":    "first_match",
-		"schema":      map[string]any{"age": map[string]any{"type": "number"}},
+		"entry":       "does-not-exist",
+		"nodes": []any{
+			map[string]any{
+				"id": "node-1", "strategy": "first_match",
+				"schema": map[string]any{"x": map[string]any{"type": "number"}},
+				"rules": []any{
+					map[string]any{
+						"id": "r1", "name": "rule",
+						"when": []any{map[string]any{"field": "x", "op": "eq", "value": 1}},
+						"then": map[string]any{"result": "ok"},
+					},
+				},
+			},
+		},
+	}
+	b, _ := json.Marshal(d)
+	_, err := dsl.ParseAndValidate(b)
+	if err == nil {
+		t.Fatal("expected error for invalid entry node, got nil")
+	}
+	if !strings.Contains(err.Error(), "entry") {
+		t.Errorf("error should mention entry, got: %v", err)
+	}
+}
+
+func TestDuplicateNodeID(t *testing.T) {
+	node := map[string]any{
+		"id": "node-1", "strategy": "first_match",
+		"schema": map[string]any{"x": map[string]any{"type": "number"}},
 		"rules": []any{
 			map[string]any{
 				"id": "r1", "name": "rule",
-				"when": []any{map[string]any{"field": "nonexistent_field", "op": "eq", "value": 1}},
+				"when": []any{map[string]any{"field": "x", "op": "eq", "value": 1}},
 				"then": map[string]any{"result": "ok"},
+			},
+		},
+	}
+	d := map[string]any{
+		"dsl_version": "v1",
+		"entry":       "node-1",
+		"nodes":       []any{node, node},
+	}
+	b, _ := json.Marshal(d)
+	_, err := dsl.ParseAndValidate(b)
+	if err == nil {
+		t.Fatal("expected error for duplicate node id, got nil")
+	}
+}
+
+func TestEdgeInvalidFrom(t *testing.T) {
+	d := map[string]any{
+		"dsl_version": "v1",
+		"entry":       "node-1",
+		"nodes": []any{
+			map[string]any{
+				"id": "node-1", "strategy": "first_match",
+				"schema": map[string]any{"x": map[string]any{"type": "number"}},
+				"rules": []any{
+					map[string]any{
+						"id": "r1", "name": "rule",
+						"when": []any{map[string]any{"field": "x", "op": "eq", "value": 1}},
+						"then": map[string]any{"result": "ok"},
+					},
+				},
+			},
+		},
+		"edges": []any{
+			map[string]any{"from": "nonexistent", "to": "node-1"},
+		},
+	}
+	b, _ := json.Marshal(d)
+	_, err := dsl.ParseAndValidate(b)
+	if err == nil {
+		t.Fatal("expected error for invalid edge from, got nil")
+	}
+}
+
+func TestEdgeSelfLoop(t *testing.T) {
+	d := map[string]any{
+		"dsl_version": "v1",
+		"entry":       "node-1",
+		"nodes": []any{
+			map[string]any{
+				"id": "node-1", "strategy": "first_match",
+				"schema": map[string]any{"x": map[string]any{"type": "number"}},
+				"rules": []any{
+					map[string]any{
+						"id": "r1", "name": "rule",
+						"when": []any{map[string]any{"field": "x", "op": "eq", "value": 1}},
+						"then": map[string]any{"result": "ok"},
+					},
+				},
+			},
+		},
+		"edges": []any{
+			map[string]any{"from": "node-1", "to": "node-1"},
+		},
+	}
+	b, _ := json.Marshal(d)
+	_, err := dsl.ParseAndValidate(b)
+	if err == nil {
+		t.Fatal("expected error for self-loop edge, got nil")
+	}
+}
+
+func TestUnknownFieldReference(t *testing.T) {
+	d := map[string]any{
+		"dsl_version": "v1",
+		"entry":       "node-1",
+		"nodes": []any{
+			map[string]any{
+				"id": "node-1", "strategy": "first_match",
+				"schema": map[string]any{"age": map[string]any{"type": "number"}},
+				"rules": []any{
+					map[string]any{
+						"id": "r1", "name": "rule",
+						"when": []any{map[string]any{"field": "nonexistent_field", "op": "eq", "value": 1}},
+						"then": map[string]any{"result": "ok"},
+					},
+				},
 			},
 		},
 	}
@@ -98,13 +263,18 @@ func TestUnknownFieldReference(t *testing.T) {
 func TestInvalidOperatorForType(t *testing.T) {
 	d := map[string]any{
 		"dsl_version": "v1",
-		"strategy":    "first_match",
-		"schema":      map[string]any{"active": map[string]any{"type": "boolean"}},
-		"rules": []any{
+		"entry":       "node-1",
+		"nodes": []any{
 			map[string]any{
-				"id": "r1", "name": "rule",
-				"when": []any{map[string]any{"field": "active", "op": "gt", "value": true}},
-				"then": map[string]any{"result": "ok"},
+				"id": "node-1", "strategy": "first_match",
+				"schema": map[string]any{"active": map[string]any{"type": "boolean"}},
+				"rules": []any{
+					map[string]any{
+						"id": "r1", "name": "rule",
+						"when": []any{map[string]any{"field": "active", "op": "gt", "value": true}},
+						"then": map[string]any{"result": "ok"},
+					},
+				},
 			},
 		},
 	}
@@ -118,13 +288,18 @@ func TestInvalidOperatorForType(t *testing.T) {
 func TestValueTypeMismatch(t *testing.T) {
 	d := map[string]any{
 		"dsl_version": "v1",
-		"strategy":    "first_match",
-		"schema":      map[string]any{"age": map[string]any{"type": "number"}},
-		"rules": []any{
+		"entry":       "node-1",
+		"nodes": []any{
 			map[string]any{
-				"id": "r1", "name": "rule",
-				"when": []any{map[string]any{"field": "age", "op": "eq", "value": "not-a-number"}},
-				"then": map[string]any{"result": "ok"},
+				"id": "node-1", "strategy": "first_match",
+				"schema": map[string]any{"age": map[string]any{"type": "number"}},
+				"rules": []any{
+					map[string]any{
+						"id": "r1", "name": "rule",
+						"when": []any{map[string]any{"field": "age", "op": "eq", "value": "not-a-number"}},
+						"then": map[string]any{"result": "ok"},
+					},
+				},
 			},
 		},
 	}
@@ -138,15 +313,20 @@ func TestValueTypeMismatch(t *testing.T) {
 func TestEnumInvalidOption(t *testing.T) {
 	d := map[string]any{
 		"dsl_version": "v1",
-		"strategy":    "first_match",
-		"schema": map[string]any{
-			"status": map[string]any{"type": "enum", "options": []string{"pending", "active"}},
-		},
-		"rules": []any{
+		"entry":       "node-1",
+		"nodes": []any{
 			map[string]any{
-				"id": "r1", "name": "rule",
-				"when": []any{map[string]any{"field": "status", "op": "eq", "value": "unknown_option"}},
-				"then": map[string]any{"result": "ok"},
+				"id": "node-1", "strategy": "first_match",
+				"schema": map[string]any{
+					"status": map[string]any{"type": "enum", "options": []string{"pending", "active"}},
+				},
+				"rules": []any{
+					map[string]any{
+						"id": "r1", "name": "rule",
+						"when": []any{map[string]any{"field": "status", "op": "eq", "value": "unknown_option"}},
+						"then": map[string]any{"result": "ok"},
+					},
+				},
 			},
 		},
 	}
@@ -160,15 +340,20 @@ func TestEnumInvalidOption(t *testing.T) {
 func TestEnumInOperator(t *testing.T) {
 	d := map[string]any{
 		"dsl_version": "v1",
-		"strategy":    "first_match",
-		"schema": map[string]any{
-			"status": map[string]any{"type": "enum", "options": []string{"pending", "active", "closed"}},
-		},
-		"rules": []any{
+		"entry":       "node-1",
+		"nodes": []any{
 			map[string]any{
-				"id": "r1", "name": "rule",
-				"when": []any{map[string]any{"field": "status", "op": "in", "value": []string{"pending", "active"}}},
-				"then": map[string]any{"result": "ok"},
+				"id": "node-1", "strategy": "first_match",
+				"schema": map[string]any{
+					"status": map[string]any{"type": "enum", "options": []string{"pending", "active", "closed"}},
+				},
+				"rules": []any{
+					map[string]any{
+						"id": "r1", "name": "rule",
+						"when": []any{map[string]any{"field": "status", "op": "in", "value": []string{"pending", "active"}}},
+						"then": map[string]any{"result": "ok"},
+					},
+				},
 			},
 		},
 	}
@@ -182,17 +367,22 @@ func TestEnumInOperator(t *testing.T) {
 func TestDeterministicSerialization(t *testing.T) {
 	input := map[string]any{
 		"dsl_version": "v1",
-		"strategy":    "first_match",
-		"schema": map[string]any{
-			"z_field": map[string]any{"type": "number"},
-			"a_field": map[string]any{"type": "string"},
-			"m_field": map[string]any{"type": "boolean"},
-		},
-		"rules": []any{
+		"entry":       "node-1",
+		"nodes": []any{
 			map[string]any{
-				"id": "r1", "name": "rule",
-				"when": []any{map[string]any{"field": "z_field", "op": "gt", "value": 0}},
-				"then": map[string]any{"z": 1, "a": 2, "m": 3},
+				"id": "node-1", "strategy": "first_match",
+				"schema": map[string]any{
+					"z_field": map[string]any{"type": "number"},
+					"a_field": map[string]any{"type": "string"},
+					"m_field": map[string]any{"type": "boolean"},
+				},
+				"rules": []any{
+					map[string]any{
+						"id": "r1", "name": "rule",
+						"when": []any{map[string]any{"field": "z_field", "op": "gt", "value": 0}},
+						"then": map[string]any{"z": 1, "a": 2, "m": 3},
+					},
+				},
 			},
 		},
 	}
