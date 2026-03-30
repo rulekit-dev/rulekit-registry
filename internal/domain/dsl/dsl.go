@@ -24,9 +24,17 @@ const (
 	StrategyAllMatches Strategy = "all_matches"
 )
 
+type FieldDirection string
+
+const (
+	FieldDirectionInput  FieldDirection = "input"
+	FieldDirectionOutput FieldDirection = "output"
+)
+
 type FieldDef struct {
-	Type    FieldType `json:"type"`
-	Options []string  `json:"options,omitempty"` // required for enum
+	Type      FieldType      `json:"type"`
+	Direction FieldDirection `json:"direction"`
+	Options   []string       `json:"options,omitempty"` // required for enum
 }
 
 type Condition struct {
@@ -42,14 +50,14 @@ type Rule struct {
 	Then map[string]any `json:"then"`
 }
 
-// RuleNode is a self-contained evaluation unit on the canvas.
-// It has its own input schema, strategy, and rules.
+// RuleNode is an evaluation unit on the canvas.
+// Its rule conditions reference fields from the top-level Schema.
 type RuleNode struct {
-	ID       string              `json:"id"`
-	Strategy Strategy            `json:"strategy"`
-	Schema   map[string]FieldDef `json:"schema"`
-	Rules    []Rule              `json:"rules"`
-	Default  map[string]any      `json:"default,omitempty"`
+	ID       string         `json:"id"`
+	Name     string         `json:"name,omitempty"`
+	Strategy Strategy       `json:"strategy"`
+	Rules    []Rule         `json:"rules"`
+	Default  map[string]any `json:"default,omitempty"`
 }
 
 // Edge connects two nodes on the canvas.
@@ -62,10 +70,11 @@ type Edge struct {
 }
 
 type DSL struct {
-	DSLVersion string     `json:"dsl_version"`
-	Entry      string     `json:"entry"`
-	Nodes      []RuleNode `json:"nodes"`
-	Edges      []Edge     `json:"edges,omitempty"`
+	DSLVersion string              `json:"dsl_version"`
+	Schema     map[string]FieldDef `json:"schema"`
+	Entry      string              `json:"entry"`
+	Nodes      []RuleNode          `json:"nodes"`
+	Edges      []Edge              `json:"edges,omitempty"`
 }
 
 var validOps = map[FieldType]map[string]bool{
@@ -97,11 +106,20 @@ func Validate(d *DSL) error {
 	if d.DSLVersion != "v1" {
 		return fmt.Errorf("dsl: unsupported dsl_version %q, expected \"v1\"", d.DSLVersion)
 	}
+	if len(d.Schema) == 0 {
+		return fmt.Errorf("dsl: schema must not be empty")
+	}
 	if d.Entry == "" {
 		return fmt.Errorf("dsl: entry must not be empty")
 	}
 	if len(d.Nodes) == 0 {
 		return fmt.Errorf("dsl: nodes must not be empty")
+	}
+
+	for fieldName, fd := range d.Schema {
+		if err := validateFieldDef("schema", fieldName, fd); err != nil {
+			return err
+		}
 	}
 
 	nodeIDs := make(map[string]bool, len(d.Nodes))
@@ -114,7 +132,7 @@ func Validate(d *DSL) error {
 		}
 		nodeIDs[node.ID] = true
 
-		if err := validateNode(node); err != nil {
+		if err := validateNode(node, d.Schema); err != nil {
 			return err
 		}
 	}
@@ -138,18 +156,9 @@ func Validate(d *DSL) error {
 	return nil
 }
 
-func validateNode(node RuleNode) error {
+func validateNode(node RuleNode, schema map[string]FieldDef) error {
 	if node.Strategy != StrategyFirstMatch && node.Strategy != StrategyAllMatches {
 		return fmt.Errorf("dsl: node %q has unknown strategy %q", node.ID, node.Strategy)
-	}
-	if len(node.Schema) == 0 {
-		return fmt.Errorf("dsl: node %q schema must not be empty", node.ID)
-	}
-
-	for fieldName, fd := range node.Schema {
-		if err := validateFieldDef(node.ID, fieldName, fd); err != nil {
-			return err
-		}
 	}
 
 	seenIDs := make(map[string]bool, len(node.Rules))
@@ -166,12 +175,21 @@ func validateNode(node RuleNode) error {
 			return fmt.Errorf("dsl: node %q rule %q has no conditions", node.ID, rule.ID)
 		}
 		for j, cond := range rule.When {
-			if err := validateCondition(fmt.Sprintf("node %q rule %q condition[%d]", node.ID, rule.ID, j), cond, node.Schema); err != nil {
+			if err := validateCondition(fmt.Sprintf("node %q rule %q condition[%d]", node.ID, rule.ID, j), cond, schema); err != nil {
 				return err
 			}
 		}
 		if len(rule.Then) == 0 {
 			return fmt.Errorf("dsl: node %q rule %q has empty then clause", node.ID, rule.ID)
+		}
+		for key := range rule.Then {
+			fd, ok := schema[key]
+			if !ok {
+				return fmt.Errorf("dsl: node %q rule %q then key %q is not defined in schema", node.ID, rule.ID, key)
+			}
+			if fd.Direction != FieldDirectionOutput {
+				return fmt.Errorf("dsl: node %q rule %q then key %q is not an output field", node.ID, rule.ID, key)
+			}
 		}
 	}
 
@@ -189,16 +207,99 @@ func ParseAndValidate(data []byte) (*DSL, error) {
 	return d, nil
 }
 
-func validateFieldDef(nodeID, name string, fd FieldDef) error {
+// ValidateDraft is a lenient validation for work-in-progress drafts.
+// It checks structural integrity (valid types, no duplicates, valid references)
+// but allows incomplete data (empty schema, empty nodes, missing conditions).
+func ValidateDraft(d *DSL) error {
+	if d.DSLVersion != "v1" {
+		return fmt.Errorf("dsl: unsupported dsl_version %q, expected \"v1\"", d.DSLVersion)
+	}
+
+	for fieldName, fd := range d.Schema {
+		if err := validateFieldDef("schema", fieldName, fd); err != nil {
+			return err
+		}
+	}
+
+	nodeIDs := make(map[string]bool, len(d.Nodes))
+	for i, node := range d.Nodes {
+		if node.ID == "" {
+			return fmt.Errorf("dsl: nodes[%d] missing id", i)
+		}
+		if nodeIDs[node.ID] {
+			return fmt.Errorf("dsl: duplicate node id %q", node.ID)
+		}
+		nodeIDs[node.ID] = true
+
+		if node.Strategy != StrategyFirstMatch && node.Strategy != StrategyAllMatches {
+			return fmt.Errorf("dsl: node %q has unknown strategy %q", node.ID, node.Strategy)
+		}
+
+		seenIDs := make(map[string]bool, len(node.Rules))
+		for j, rule := range node.Rules {
+			if rule.ID == "" {
+				return fmt.Errorf("dsl: node %q rules[%d] missing id", node.ID, j)
+			}
+			if seenIDs[rule.ID] {
+				return fmt.Errorf("dsl: node %q duplicate rule id %q", node.ID, rule.ID)
+			}
+			seenIDs[rule.ID] = true
+
+			for k, cond := range rule.When {
+				if err := validateCondition(fmt.Sprintf("node %q rule %q condition[%d]", node.ID, rule.ID, k), cond, d.Schema); err != nil {
+					return err
+				}
+			}
+		}
+	}
+
+	if d.Entry != "" && !nodeIDs[d.Entry] {
+		return fmt.Errorf("dsl: entry %q does not reference a valid node id", d.Entry)
+	}
+
+	for i, edge := range d.Edges {
+		if !nodeIDs[edge.From] {
+			return fmt.Errorf("dsl: edges[%d] from %q does not reference a valid node id", i, edge.From)
+		}
+		if !nodeIDs[edge.To] {
+			return fmt.Errorf("dsl: edges[%d] to %q does not reference a valid node id", i, edge.To)
+		}
+		if edge.From == edge.To {
+			return fmt.Errorf("dsl: edges[%d] self-loop on node %q", i, edge.From)
+		}
+	}
+
+	return nil
+}
+
+// ParseAndValidateDraft parses and applies lenient draft validation.
+func ParseAndValidateDraft(data []byte) (*DSL, error) {
+	d, err := Parse(data)
+	if err != nil {
+		return nil, err
+	}
+	if err := ValidateDraft(d); err != nil {
+		return nil, err
+	}
+	return d, nil
+}
+
+func validateFieldDef(loc, name string, fd FieldDef) error {
 	switch fd.Type {
 	case FieldTypeNumber, FieldTypeString, FieldTypeBoolean:
 		// valid
 	case FieldTypeEnum:
 		if len(fd.Options) == 0 {
-			return fmt.Errorf("dsl: node %q field %q is type enum but has no options", nodeID, name)
+			return fmt.Errorf("dsl: %s field %q is type enum but has no options", loc, name)
 		}
 	default:
-		return fmt.Errorf("dsl: node %q field %q has unknown type %q", nodeID, name, fd.Type)
+		return fmt.Errorf("dsl: %s field %q has unknown type %q", loc, name, fd.Type)
+	}
+	switch fd.Direction {
+	case FieldDirectionInput, FieldDirectionOutput:
+		// valid
+	default:
+		return fmt.Errorf("dsl: %s field %q has unknown direction %q", loc, name, fd.Direction)
 	}
 	return nil
 }
@@ -210,6 +311,9 @@ func validateCondition(loc string, cond Condition, schema map[string]FieldDef) e
 	fd, ok := schema[cond.Field]
 	if !ok {
 		return fmt.Errorf("dsl: %s references unknown field %q", loc, cond.Field)
+	}
+	if fd.Direction != FieldDirectionInput {
+		return fmt.Errorf("dsl: %s field %q is not an input field", loc, cond.Field)
 	}
 	ops, ok := validOps[fd.Type]
 	if !ok {

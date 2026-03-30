@@ -11,20 +11,22 @@ import (
 func validDSLBytes() []byte {
 	d := map[string]any{
 		"dsl_version": "v1",
-		"entry":       "node-1",
+		"schema": map[string]any{
+			"age":    map[string]any{"type": "number", "direction": "input"},
+			"name":   map[string]any{"type": "string", "direction": "input"},
+			"active": map[string]any{"type": "boolean", "direction": "input"},
+			"status": map[string]any{
+				"type":      "enum",
+				"direction": "input",
+				"options":   []string{"pending", "active", "closed"},
+			},
+			"result": map[string]any{"type": "string", "direction": "output"},
+		},
+		"entry": "node-1",
 		"nodes": []any{
 			map[string]any{
 				"id":       "node-1",
 				"strategy": "first_match",
-				"schema": map[string]any{
-					"age":    map[string]any{"type": "number"},
-					"name":   map[string]any{"type": "string"},
-					"active": map[string]any{"type": "boolean"},
-					"status": map[string]any{
-						"type":    "enum",
-						"options": []string{"pending", "active", "closed"},
-					},
-				},
 				"rules": []any{
 					map[string]any{
 						"id":   "rule-1",
@@ -58,12 +60,17 @@ func TestValidDSL(t *testing.T) {
 func TestMultiNodeWithEdge(t *testing.T) {
 	d := map[string]any{
 		"dsl_version": "v1",
-		"entry":       "eligibility",
+		"schema": map[string]any{
+			"age":      map[string]any{"type": "number", "direction": "input"},
+			"score":    map[string]any{"type": "number", "direction": "input"},
+			"eligible": map[string]any{"type": "boolean", "direction": "output"},
+			"tier":     map[string]any{"type": "string", "direction": "output"},
+		},
+		"entry": "eligibility",
 		"nodes": []any{
 			map[string]any{
 				"id":       "eligibility",
 				"strategy": "first_match",
-				"schema":   map[string]any{"age": map[string]any{"type": "number"}},
 				"rules": []any{
 					map[string]any{
 						"id": "r1", "name": "adult",
@@ -75,7 +82,6 @@ func TestMultiNodeWithEdge(t *testing.T) {
 			map[string]any{
 				"id":       "pricing",
 				"strategy": "all_matches",
-				"schema":   map[string]any{"score": map[string]any{"type": "number"}},
 				"rules": []any{
 					map[string]any{
 						"id": "r2", "name": "high-score",
@@ -99,11 +105,11 @@ func TestMultiNodeWithEdge(t *testing.T) {
 func TestUnknownDSLVersion(t *testing.T) {
 	d := map[string]any{
 		"dsl_version": "v2",
+		"schema":      map[string]any{"x": map[string]any{"type": "number", "direction": "input"}},
 		"entry":       "node-1",
 		"nodes": []any{
 			map[string]any{
 				"id": "node-1", "strategy": "first_match",
-				"schema": map[string]any{"x": map[string]any{"type": "number"}},
 				"rules": []any{
 					map[string]any{
 						"id": "r1", "name": "rule",
@@ -127,11 +133,14 @@ func TestUnknownDSLVersion(t *testing.T) {
 func TestMissingEntry(t *testing.T) {
 	d := map[string]any{
 		"dsl_version": "v1",
-		"entry":       "does-not-exist",
+		"schema": map[string]any{
+			"x":      map[string]any{"type": "number", "direction": "input"},
+			"result": map[string]any{"type": "string", "direction": "output"},
+		},
+		"entry": "does-not-exist",
 		"nodes": []any{
 			map[string]any{
 				"id": "node-1", "strategy": "first_match",
-				"schema": map[string]any{"x": map[string]any{"type": "number"}},
 				"rules": []any{
 					map[string]any{
 						"id": "r1", "name": "rule",
@@ -155,7 +164,6 @@ func TestMissingEntry(t *testing.T) {
 func TestDuplicateNodeID(t *testing.T) {
 	node := map[string]any{
 		"id": "node-1", "strategy": "first_match",
-		"schema": map[string]any{"x": map[string]any{"type": "number"}},
 		"rules": []any{
 			map[string]any{
 				"id": "r1", "name": "rule",
@@ -166,8 +174,12 @@ func TestDuplicateNodeID(t *testing.T) {
 	}
 	d := map[string]any{
 		"dsl_version": "v1",
-		"entry":       "node-1",
-		"nodes":       []any{node, node},
+		"schema": map[string]any{
+			"x":      map[string]any{"type": "number", "direction": "input"},
+			"result": map[string]any{"type": "string", "direction": "output"},
+		},
+		"entry": "node-1",
+		"nodes": []any{node, node},
 	}
 	b, _ := json.Marshal(d)
 	_, err := dsl.ParseAndValidate(b)
@@ -179,11 +191,14 @@ func TestDuplicateNodeID(t *testing.T) {
 func TestEdgeInvalidFrom(t *testing.T) {
 	d := map[string]any{
 		"dsl_version": "v1",
-		"entry":       "node-1",
+		"schema": map[string]any{
+			"x":      map[string]any{"type": "number", "direction": "input"},
+			"result": map[string]any{"type": "string", "direction": "output"},
+		},
+		"entry": "node-1",
 		"nodes": []any{
 			map[string]any{
 				"id": "node-1", "strategy": "first_match",
-				"schema": map[string]any{"x": map[string]any{"type": "number"}},
 				"rules": []any{
 					map[string]any{
 						"id": "r1", "name": "rule",
@@ -207,11 +222,14 @@ func TestEdgeInvalidFrom(t *testing.T) {
 func TestEdgeSelfLoop(t *testing.T) {
 	d := map[string]any{
 		"dsl_version": "v1",
-		"entry":       "node-1",
+		"schema": map[string]any{
+			"x":      map[string]any{"type": "number", "direction": "input"},
+			"result": map[string]any{"type": "string", "direction": "output"},
+		},
+		"entry": "node-1",
 		"nodes": []any{
 			map[string]any{
 				"id": "node-1", "strategy": "first_match",
-				"schema": map[string]any{"x": map[string]any{"type": "number"}},
 				"rules": []any{
 					map[string]any{
 						"id": "r1", "name": "rule",
@@ -235,11 +253,14 @@ func TestEdgeSelfLoop(t *testing.T) {
 func TestUnknownFieldReference(t *testing.T) {
 	d := map[string]any{
 		"dsl_version": "v1",
-		"entry":       "node-1",
+		"schema": map[string]any{
+			"age":    map[string]any{"type": "number", "direction": "input"},
+			"result": map[string]any{"type": "string", "direction": "output"},
+		},
+		"entry": "node-1",
 		"nodes": []any{
 			map[string]any{
 				"id": "node-1", "strategy": "first_match",
-				"schema": map[string]any{"age": map[string]any{"type": "number"}},
 				"rules": []any{
 					map[string]any{
 						"id": "r1", "name": "rule",
@@ -263,11 +284,14 @@ func TestUnknownFieldReference(t *testing.T) {
 func TestInvalidOperatorForType(t *testing.T) {
 	d := map[string]any{
 		"dsl_version": "v1",
-		"entry":       "node-1",
+		"schema": map[string]any{
+			"active": map[string]any{"type": "boolean", "direction": "input"},
+			"result": map[string]any{"type": "string", "direction": "output"},
+		},
+		"entry": "node-1",
 		"nodes": []any{
 			map[string]any{
 				"id": "node-1", "strategy": "first_match",
-				"schema": map[string]any{"active": map[string]any{"type": "boolean"}},
 				"rules": []any{
 					map[string]any{
 						"id": "r1", "name": "rule",
@@ -288,11 +312,14 @@ func TestInvalidOperatorForType(t *testing.T) {
 func TestValueTypeMismatch(t *testing.T) {
 	d := map[string]any{
 		"dsl_version": "v1",
-		"entry":       "node-1",
+		"schema": map[string]any{
+			"age":    map[string]any{"type": "number", "direction": "input"},
+			"result": map[string]any{"type": "string", "direction": "output"},
+		},
+		"entry": "node-1",
 		"nodes": []any{
 			map[string]any{
 				"id": "node-1", "strategy": "first_match",
-				"schema": map[string]any{"age": map[string]any{"type": "number"}},
 				"rules": []any{
 					map[string]any{
 						"id": "r1", "name": "rule",
@@ -313,13 +340,14 @@ func TestValueTypeMismatch(t *testing.T) {
 func TestEnumInvalidOption(t *testing.T) {
 	d := map[string]any{
 		"dsl_version": "v1",
-		"entry":       "node-1",
+		"schema": map[string]any{
+			"status": map[string]any{"type": "enum", "direction": "input", "options": []string{"pending", "active"}},
+			"result": map[string]any{"type": "string", "direction": "output"},
+		},
+		"entry": "node-1",
 		"nodes": []any{
 			map[string]any{
 				"id": "node-1", "strategy": "first_match",
-				"schema": map[string]any{
-					"status": map[string]any{"type": "enum", "options": []string{"pending", "active"}},
-				},
 				"rules": []any{
 					map[string]any{
 						"id": "r1", "name": "rule",
@@ -340,13 +368,14 @@ func TestEnumInvalidOption(t *testing.T) {
 func TestEnumInOperator(t *testing.T) {
 	d := map[string]any{
 		"dsl_version": "v1",
-		"entry":       "node-1",
+		"schema": map[string]any{
+			"status": map[string]any{"type": "enum", "direction": "input", "options": []string{"pending", "active", "closed"}},
+			"result": map[string]any{"type": "string", "direction": "output"},
+		},
+		"entry": "node-1",
 		"nodes": []any{
 			map[string]any{
 				"id": "node-1", "strategy": "first_match",
-				"schema": map[string]any{
-					"status": map[string]any{"type": "enum", "options": []string{"pending", "active", "closed"}},
-				},
 				"rules": []any{
 					map[string]any{
 						"id": "r1", "name": "rule",
@@ -367,15 +396,15 @@ func TestEnumInOperator(t *testing.T) {
 func TestDeterministicSerialization(t *testing.T) {
 	input := map[string]any{
 		"dsl_version": "v1",
-		"entry":       "node-1",
+		"schema": map[string]any{
+			"z_field": map[string]any{"type": "number", "direction": "input"},
+			"a_field": map[string]any{"type": "string", "direction": "input"},
+			"m_field": map[string]any{"type": "boolean", "direction": "input"},
+		},
+		"entry": "node-1",
 		"nodes": []any{
 			map[string]any{
 				"id": "node-1", "strategy": "first_match",
-				"schema": map[string]any{
-					"z_field": map[string]any{"type": "number"},
-					"a_field": map[string]any{"type": "string"},
-					"m_field": map[string]any{"type": "boolean"},
-				},
 				"rules": []any{
 					map[string]any{
 						"id": "r1", "name": "rule",
@@ -410,5 +439,112 @@ func TestChecksumFormat(t *testing.T) {
 	const expectedLen = 7 + 64
 	if len(checksum) != expectedLen {
 		t.Errorf("expected checksum length %d, got %d: %q", expectedLen, len(checksum), checksum)
+	}
+}
+
+func TestEmptySchema(t *testing.T) {
+	d := map[string]any{
+		"dsl_version": "v1",
+		"schema":      map[string]any{},
+		"entry":       "node-1",
+		"nodes": []any{
+			map[string]any{
+				"id": "node-1", "strategy": "first_match",
+				"rules": []any{},
+			},
+		},
+	}
+	b, _ := json.Marshal(d)
+	_, err := dsl.ParseAndValidate(b)
+	if err == nil {
+		t.Fatal("expected error for empty schema, got nil")
+	}
+	if !strings.Contains(err.Error(), "schema") {
+		t.Errorf("error should mention schema, got: %v", err)
+	}
+}
+
+func TestConditionOnOutputFieldRejected(t *testing.T) {
+	d := map[string]any{
+		"dsl_version": "v1",
+		"schema": map[string]any{
+			"result": map[string]any{"type": "string", "direction": "output"},
+		},
+		"entry": "node-1",
+		"nodes": []any{
+			map[string]any{
+				"id": "node-1", "strategy": "first_match",
+				"rules": []any{
+					map[string]any{
+						"id": "r1", "name": "rule",
+						"when": []any{map[string]any{"field": "result", "op": "eq", "value": "ok"}},
+						"then": map[string]any{"result": "ok"},
+					},
+				},
+			},
+		},
+	}
+	b, _ := json.Marshal(d)
+	_, err := dsl.ParseAndValidate(b)
+	if err == nil {
+		t.Fatal("expected error for condition on output field, got nil")
+	}
+	if !strings.Contains(err.Error(), "not an input field") {
+		t.Errorf("error should mention input field, got: %v", err)
+	}
+}
+
+func TestThenKeyOnInputFieldRejected(t *testing.T) {
+	d := map[string]any{
+		"dsl_version": "v1",
+		"schema": map[string]any{
+			"age":    map[string]any{"type": "number", "direction": "input"},
+			"result": map[string]any{"type": "string", "direction": "output"},
+		},
+		"entry": "node-1",
+		"nodes": []any{
+			map[string]any{
+				"id": "node-1", "strategy": "first_match",
+				"rules": []any{
+					map[string]any{
+						"id": "r1", "name": "rule",
+						"when": []any{map[string]any{"field": "age", "op": "eq", "value": 18}},
+						"then": map[string]any{"age": 20},
+					},
+				},
+			},
+		},
+	}
+	b, _ := json.Marshal(d)
+	_, err := dsl.ParseAndValidate(b)
+	if err == nil {
+		t.Fatal("expected error for then key on input field, got nil")
+	}
+	if !strings.Contains(err.Error(), "not an output field") {
+		t.Errorf("error should mention output field, got: %v", err)
+	}
+}
+
+func TestMissingDirectionRejected(t *testing.T) {
+	d := map[string]any{
+		"dsl_version": "v1",
+		"schema": map[string]any{
+			"x": map[string]any{"type": "number"},
+		},
+		"entry": "node-1",
+		"nodes": []any{
+			map[string]any{
+				"id": "node-1", "strategy": "first_match",
+				"rules": []any{},
+			},
+		},
+	}
+	b, _ := json.Marshal(d)
+	_, err := dsl.ParseAndValidate(b)
+	if err == nil {
+		t.Fatal("expected error for missing direction, got nil")
+	}
+	if !strings.Contains(err.Error(), "direction") {
+		t.Errorf("error should mention direction, got: %v", err)
 	}
 }

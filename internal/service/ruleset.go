@@ -85,7 +85,7 @@ func (s *RulesetService) UpsertDraft(ctx context.Context, workspace, key string,
 		return nil, mapErr(err)
 	}
 
-	if _, err := dsl.ParseAndValidate(rawDSL); err != nil {
+	if _, err := dsl.ParseAndValidateDraft(rawDSL); err != nil {
 		return nil, &ValidationError{Msg: err.Error()}
 	}
 
