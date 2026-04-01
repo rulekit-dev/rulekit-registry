@@ -264,11 +264,10 @@ func (d *Datastore) GetUserByID(_ context.Context, id string) (*domain.User, err
 func (d *Datastore) UpdateUserLastLogin(_ context.Context, userID string) error {
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	u, ok := d.users[userID]
+	_, ok := d.users[userID]
 	if !ok {
 		return port.ErrNotFound
 	}
-	u.LastLoginAt = u.LastLoginAt // no-op for mock
 	return nil
 }
 
