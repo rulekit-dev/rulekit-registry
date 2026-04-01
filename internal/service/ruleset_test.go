@@ -14,11 +14,14 @@ import (
 
 var validDSLJSON = json.RawMessage(`{
 	"dsl_version": "v1",
+	"schema": {
+		"age":    {"type": "number", "direction": "input"},
+		"result": {"type": "string", "direction": "output"}
+	},
 	"entry": "node-1",
 	"nodes": [{
 		"id": "node-1",
 		"strategy": "first_match",
-		"schema": {"age": {"type": "number"}},
 		"rules": [{
 			"id": "r1",
 			"name": "adult",
@@ -229,11 +232,14 @@ func TestPublishIncrementsVersion(t *testing.T) {
 
 	dsl2 := json.RawMessage(`{
 		"dsl_version": "v1",
+		"schema": {
+			"score": {"type": "number", "direction": "input"},
+			"tier":  {"type": "string", "direction": "output"}
+		},
 		"entry": "node-1",
 		"nodes": [{
 			"id": "node-1",
 			"strategy": "all_matches",
-			"schema": {"score": {"type": "number"}},
 			"rules": [{
 				"id": "r2", "name": "high",
 				"when": [{"field": "score", "op": "gt", "value": 90}],

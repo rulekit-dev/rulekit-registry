@@ -107,14 +107,15 @@ func authDo(t *testing.T, token string, req *http.Request) *http.Response {
 
 var validDSL = map[string]any{
 	"dsl_version": "v1",
-	"entry":       "node-1",
+	"schema": map[string]any{
+		"age":    map[string]any{"type": "number", "direction": "input"},
+		"result": map[string]any{"type": "string", "direction": "output"},
+	},
+	"entry": "node-1",
 	"nodes": []any{
 		map[string]any{
 			"id":       "node-1",
 			"strategy": "first_match",
-			"schema": map[string]any{
-				"age": map[string]any{"type": "number"},
-			},
 			"rules": []any{
 				map[string]any{
 					"id":   "r1",
@@ -437,12 +438,15 @@ func TestPublishIncrementsVersion(t *testing.T) {
 
 	dsl2 := map[string]any{
 		"dsl_version": "v1",
-		"entry":       "node-1",
+		"schema": map[string]any{
+			"score": map[string]any{"type": "number", "direction": "input"},
+			"tier":  map[string]any{"type": "string", "direction": "output"},
+		},
+		"entry": "node-1",
 		"nodes": []any{
 			map[string]any{
 				"id":       "node-1",
 				"strategy": "all_matches",
-				"schema":   map[string]any{"score": map[string]any{"type": "number"}},
 				"rules": []any{
 					map[string]any{
 						"id":   "r2",
@@ -520,12 +524,15 @@ func TestListVersions(t *testing.T) {
 
 	dsl2 := map[string]any{
 		"dsl_version": "v1",
-		"entry":       "node-1",
+		"schema": map[string]any{
+			"x":  map[string]any{"type": "number", "direction": "input"},
+			"ok": map[string]any{"type": "boolean", "direction": "output"},
+		},
+		"entry": "node-1",
 		"nodes": []any{
 			map[string]any{
 				"id":       "node-1",
 				"strategy": "all_matches",
-				"schema":   map[string]any{"x": map[string]any{"type": "number"}},
 				"rules": []any{
 					map[string]any{
 						"id": "r1", "name": "x",
