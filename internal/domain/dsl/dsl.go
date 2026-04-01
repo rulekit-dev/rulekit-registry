@@ -131,10 +131,6 @@ func Validate(d *DSL) error {
 			return fmt.Errorf("dsl: duplicate node id %q", node.ID)
 		}
 		nodeIDs[node.ID] = true
-
-		if err := validateNode(node, d.Schema); err != nil {
-			return err
-		}
 	}
 
 	if !nodeIDs[d.Entry] {
@@ -151,12 +147,48 @@ func Validate(d *DSL) error {
 		if edge.From == edge.To {
 			return fmt.Errorf("dsl: edges[%d] self-loop on node %q", i, edge.From)
 		}
+		for _, destField := range edge.Map {
+			if _, ok := d.Schema[destField]; !ok {
+				return fmt.Errorf("dsl: edges[%d] map destination field %q is not defined in schema", i, destField)
+			}
+		}
+	}
+
+	nodeIncomingFields := buildNodeIncomingFields(d.Edges, d.Schema)
+	for _, node := range d.Nodes {
+		if err := validateNode(node, d.Schema, nodeIncomingFields[node.ID]); err != nil {
+			return err
+		}
 	}
 
 	return nil
 }
 
-func validateNode(node RuleNode, schema map[string]FieldDef) error {
+// buildNodeIncomingFields returns per-node sets of field names that are
+// available as inputs from upstream edges. When an edge has no Map, all
+// output fields from the schema are implicitly available to the destination.
+func buildNodeIncomingFields(edges []Edge, schema map[string]FieldDef) map[string]map[string]bool {
+	result := make(map[string]map[string]bool)
+	for _, edge := range edges {
+		if result[edge.To] == nil {
+			result[edge.To] = make(map[string]bool)
+		}
+		if len(edge.Map) == 0 {
+			for name, fd := range schema {
+				if fd.Direction == FieldDirectionOutput {
+					result[edge.To][name] = true
+				}
+			}
+		} else {
+			for _, destField := range edge.Map {
+				result[edge.To][destField] = true
+			}
+		}
+	}
+	return result
+}
+
+func validateNode(node RuleNode, schema map[string]FieldDef, extraInputs map[string]bool) error {
 	if node.Strategy != StrategyFirstMatch && node.Strategy != StrategyAllMatches {
 		return fmt.Errorf("dsl: node %q has unknown strategy %q", node.ID, node.Strategy)
 	}
@@ -175,7 +207,7 @@ func validateNode(node RuleNode, schema map[string]FieldDef) error {
 			return fmt.Errorf("dsl: node %q rule %q has no conditions", node.ID, rule.ID)
 		}
 		for j, cond := range rule.When {
-			if err := validateCondition(fmt.Sprintf("node %q rule %q condition[%d]", node.ID, rule.ID, j), cond, schema); err != nil {
+			if err := validateCondition(fmt.Sprintf("node %q rule %q condition[%d]", node.ID, rule.ID, j), cond, schema, extraInputs); err != nil {
 				return err
 			}
 		}
@@ -244,12 +276,6 @@ func ValidateDraft(d *DSL) error {
 				return fmt.Errorf("dsl: node %q duplicate rule id %q", node.ID, rule.ID)
 			}
 			seenIDs[rule.ID] = true
-
-			for k, cond := range rule.When {
-				if err := validateCondition(fmt.Sprintf("node %q rule %q condition[%d]", node.ID, rule.ID, k), cond, d.Schema); err != nil {
-					return err
-				}
-			}
 		}
 	}
 
@@ -266,6 +292,23 @@ func ValidateDraft(d *DSL) error {
 		}
 		if edge.From == edge.To {
 			return fmt.Errorf("dsl: edges[%d] self-loop on node %q", i, edge.From)
+		}
+		for _, destField := range edge.Map {
+			if _, ok := d.Schema[destField]; !ok {
+				return fmt.Errorf("dsl: edges[%d] map destination field %q is not defined in schema", i, destField)
+			}
+		}
+	}
+
+	nodeIncomingFields := buildNodeIncomingFields(d.Edges, d.Schema)
+	for _, node := range d.Nodes {
+		extraInputs := nodeIncomingFields[node.ID]
+		for j, rule := range node.Rules {
+			for k, cond := range rule.When {
+				if err := validateCondition(fmt.Sprintf("node %q rule %q condition[%d]", node.ID, rule.ID, k), cond, d.Schema, extraInputs); err != nil {
+					return fmt.Errorf("dsl: nodes[%d] %w", j, err)
+				}
+			}
 		}
 	}
 
@@ -304,7 +347,7 @@ func validateFieldDef(loc, name string, fd FieldDef) error {
 	return nil
 }
 
-func validateCondition(loc string, cond Condition, schema map[string]FieldDef) error {
+func validateCondition(loc string, cond Condition, schema map[string]FieldDef, extraInputs map[string]bool) error {
 	if cond.Field == "" {
 		return fmt.Errorf("dsl: %s missing field", loc)
 	}
@@ -312,7 +355,7 @@ func validateCondition(loc string, cond Condition, schema map[string]FieldDef) e
 	if !ok {
 		return fmt.Errorf("dsl: %s references unknown field %q", loc, cond.Field)
 	}
-	if fd.Direction != FieldDirectionInput {
+	if fd.Direction != FieldDirectionInput && !extraInputs[cond.Field] {
 		return fmt.Errorf("dsl: %s field %q is not an input field", loc, cond.Field)
 	}
 	ops, ok := validOps[fd.Type]

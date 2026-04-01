@@ -92,7 +92,7 @@ func TestMultiNodeWithEdge(t *testing.T) {
 			},
 		},
 		"edges": []any{
-			map[string]any{"from": "eligibility", "to": "pricing", "map": map[string]any{"score": "credit_score"}},
+			map[string]any{"from": "eligibility", "to": "pricing"},
 		},
 	}
 	b, _ := json.Marshal(d)
@@ -546,5 +546,183 @@ func TestMissingDirectionRejected(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "direction") {
 		t.Errorf("error should mention direction, got: %v", err)
+	}
+}
+
+func TestOutputFieldUsableAsInputViaEdge(t *testing.T) {
+	d := map[string]any{
+		"dsl_version": "v1",
+		"schema": map[string]any{
+			"score": map[string]any{"type": "number", "direction": "input"},
+			"risk":  map[string]any{"type": "string", "direction": "output"},
+			"tier":  map[string]any{"type": "string", "direction": "output"},
+		},
+		"entry": "node-1",
+		"nodes": []any{
+			map[string]any{
+				"id":       "node-1",
+				"strategy": "first_match",
+				"rules": []any{
+					map[string]any{
+						"id": "r1", "name": "classify",
+						"when": []any{map[string]any{"field": "score", "op": "gte", "value": 80}},
+						"then": map[string]any{"risk": "low"},
+					},
+				},
+			},
+			map[string]any{
+				"id":       "node-2",
+				"strategy": "first_match",
+				"rules": []any{
+					map[string]any{
+						"id": "r2", "name": "price",
+						"when": []any{map[string]any{"field": "risk", "op": "eq", "value": "low"}},
+						"then": map[string]any{"tier": "gold"},
+					},
+				},
+			},
+		},
+		"edges": []any{
+			map[string]any{"from": "node-1", "to": "node-2", "map": map[string]any{"risk": "risk"}},
+		},
+	}
+	b, _ := json.Marshal(d)
+	_, err := dsl.ParseAndValidate(b)
+	if err != nil {
+		t.Fatalf("expected no error when output field is mapped via edge into downstream node, got: %v", err)
+	}
+}
+
+func TestOutputFieldWithoutEdgeRejected(t *testing.T) {
+	d := map[string]any{
+		"dsl_version": "v1",
+		"schema": map[string]any{
+			"score": map[string]any{"type": "number", "direction": "input"},
+			"risk":  map[string]any{"type": "string", "direction": "output"},
+			"tier":  map[string]any{"type": "string", "direction": "output"},
+		},
+		"entry": "node-1",
+		"nodes": []any{
+			map[string]any{
+				"id":       "node-1",
+				"strategy": "first_match",
+				"rules": []any{
+					map[string]any{
+						"id": "r1", "name": "classify",
+						"when": []any{map[string]any{"field": "score", "op": "gte", "value": 80}},
+						"then": map[string]any{"risk": "low"},
+					},
+				},
+			},
+			map[string]any{
+				"id":       "node-2",
+				"strategy": "first_match",
+				"rules": []any{
+					map[string]any{
+						"id": "r2", "name": "price",
+						"when": []any{map[string]any{"field": "risk", "op": "eq", "value": "low"}},
+						"then": map[string]any{"tier": "gold"},
+					},
+				},
+			},
+		},
+	}
+	b, _ := json.Marshal(d)
+	_, err := dsl.ParseAndValidate(b)
+	if err == nil {
+		t.Fatal("expected error when output field is used in condition with no incoming edge, got nil")
+	}
+	if !strings.Contains(err.Error(), "not an input field") {
+		t.Errorf("error should mention input field, got: %v", err)
+	}
+}
+
+func TestOutputFieldViaEdgeWithoutMapAllowed(t *testing.T) {
+	d := map[string]any{
+		"dsl_version": "v1",
+		"schema": map[string]any{
+			"score": map[string]any{"type": "number", "direction": "input"},
+			"risk":  map[string]any{"type": "string", "direction": "output"},
+			"tier":  map[string]any{"type": "string", "direction": "output"},
+		},
+		"entry": "node-1",
+		"nodes": []any{
+			map[string]any{
+				"id":       "node-1",
+				"strategy": "first_match",
+				"rules": []any{
+					map[string]any{
+						"id": "r1", "name": "classify",
+						"when": []any{map[string]any{"field": "score", "op": "gte", "value": 80}},
+						"then": map[string]any{"risk": "low"},
+					},
+				},
+			},
+			map[string]any{
+				"id":       "node-2",
+				"strategy": "first_match",
+				"rules": []any{
+					map[string]any{
+						"id": "r2", "name": "price",
+						"when": []any{map[string]any{"field": "risk", "op": "eq", "value": "low"}},
+						"then": map[string]any{"tier": "gold"},
+					},
+				},
+			},
+		},
+		"edges": []any{
+			map[string]any{"from": "node-1", "to": "node-2"},
+		},
+	}
+	b, _ := json.Marshal(d)
+	_, err := dsl.ParseAndValidate(b)
+	if err != nil {
+		t.Fatalf("expected no error when edge without map implicitly passes output fields, got: %v", err)
+	}
+}
+
+func TestEdgeMapDestinationNotInSchemaRejected(t *testing.T) {
+	d := map[string]any{
+		"dsl_version": "v1",
+		"schema": map[string]any{
+			"score": map[string]any{"type": "number", "direction": "input"},
+			"risk":  map[string]any{"type": "string", "direction": "output"},
+		},
+		"entry": "node-1",
+		"nodes": []any{
+			map[string]any{
+				"id":       "node-1",
+				"strategy": "first_match",
+				"rules": []any{
+					map[string]any{
+						"id": "r1", "name": "classify",
+						"when": []any{map[string]any{"field": "score", "op": "gte", "value": 80}},
+						"then": map[string]any{"risk": "low"},
+					},
+				},
+			},
+			map[string]any{
+				"id":       "node-2",
+				"strategy": "first_match",
+				"rules": []any{
+					map[string]any{
+						"id": "r2", "name": "noop",
+						"when": []any{map[string]any{"field": "score", "op": "gte", "value": 80}},
+						"then": map[string]any{"risk": "high"},
+					},
+				},
+			},
+		},
+		"edges": []any{
+			map[string]any{"from": "node-1", "to": "node-2", "map": map[string]any{"risk": "undefined_field"}},
+		},
+	}
+	b, _ := json.Marshal(d)
+	_, err := dsl.ParseAndValidate(b)
+	if err == nil {
+		t.Fatal("expected error for edge map destination field not in schema, got nil")
+	}
+	if !strings.Contains(err.Error(), "undefined_field") {
+		t.Errorf("error should mention the invalid field name, got: %v", err)
 	}
 }
