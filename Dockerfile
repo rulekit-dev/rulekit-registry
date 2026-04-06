@@ -29,6 +29,8 @@ RUN apk add --no-cache wget
 
 COPY --from=builder /rulekitd /rulekitd
 
+RUN mkdir -p /data && chown nobody:nobody /data
+
 EXPOSE 8080
 
 HEALTHCHECK --interval=5s --timeout=3s --start-period=10s --retries=5 \
