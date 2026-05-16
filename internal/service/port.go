@@ -45,6 +45,7 @@ type AuthUseCase interface {
 
 // AdminUseCase is the inbound port for admin operations.
 type AdminUseCase interface {
+	CreateUser(ctx context.Context, email string) (*domain.User, error)
 	ListUsers(ctx context.Context, limit, offset int) ([]*domain.User, error)
 	DeleteUser(ctx context.Context, userID string) error
 

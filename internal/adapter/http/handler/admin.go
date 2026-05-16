@@ -17,6 +17,30 @@ func NewAdminHandler(svc service.AdminUseCase) *AdminHandler {
 	return &AdminHandler{svc: svc}
 }
 
+func (h *AdminHandler) CreateUser(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Email string `json:"email"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		WriteError(w, http.StatusBadRequest, "BAD_REQUEST", "invalid JSON body")
+		return
+	}
+	if body.Email == "" {
+		WriteError(w, http.StatusBadRequest, "BAD_REQUEST", "email is required")
+		return
+	}
+	user, err := h.svc.CreateUser(r.Context(), body.Email)
+	if err != nil {
+		if errors.Is(err, service.ErrAlreadyExists) {
+			WriteError(w, http.StatusConflict, "ALREADY_EXISTS", "user with this email already exists")
+			return
+		}
+		WriteError(w, http.StatusInternalServerError, "INTERNAL", "failed to create user")
+		return
+	}
+	WriteJSON(w, http.StatusCreated, user)
+}
+
 func (h *AdminHandler) ListUsers(w http.ResponseWriter, r *http.Request) {
 	limit, offset := PageParams(r)
 	users, err := h.svc.ListUsers(r.Context(), limit, offset)

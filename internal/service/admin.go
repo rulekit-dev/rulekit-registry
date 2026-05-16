@@ -22,6 +22,22 @@ func NewAdminService(db port.Datastore) *AdminService {
 	return &AdminService{db: db}
 }
 
+func (s *AdminService) CreateUser(ctx context.Context, email string) (*domain.User, error) {
+	if _, err := s.db.GetUserByEmail(ctx, email); err == nil {
+		return nil, ErrAlreadyExists
+	}
+	u := &domain.User{
+		ID:        uuid.NewString(),
+		Email:     email,
+		CreatedAt: time.Now().UTC(),
+	}
+	if err := s.db.CreateUser(ctx, u); err != nil {
+		slog.ErrorContext(ctx, "create user", "email", email, "error", err)
+		return nil, err
+	}
+	return u, nil
+}
+
 func (s *AdminService) ListUsers(ctx context.Context, limit, offset int) ([]*domain.User, error) {
 	users, err := s.db.ListUsers(ctx, limit, offset)
 	if err != nil {

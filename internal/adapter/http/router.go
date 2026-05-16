@@ -52,6 +52,7 @@ func NewRouter(h *handler.RulesetHandler, auth *handler.AuthHandler, admin *hand
 	v1.Handle("GET /v1/rulesets/{key}/versions/{version}/bundle", requireRole(domain.RoleViewer, http.HandlerFunc(h.GetVersionBundle)))
 
 	// Admin API: admin role required.
+	v1.Handle("POST /v1/admin/users", requireAdmin(http.HandlerFunc(admin.CreateUser)))
 	v1.Handle("GET /v1/admin/users", requireAdmin(http.HandlerFunc(admin.ListUsers)))
 	v1.Handle("DELETE /v1/admin/users/{userID}", requireAdmin(http.HandlerFunc(admin.DeleteUser)))
 	v1.Handle("GET /v1/admin/users/{userID}/roles", requireAdmin(http.HandlerFunc(admin.ListUserRoles)))
