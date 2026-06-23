@@ -43,3 +43,15 @@ type VersionManifest struct {
 	Checksum   string    `json:"checksum"`
 	CreatedAt  time.Time `json:"created_at"`
 }
+
+type TraceEntry struct {
+	RuleID   string `json:"rule_id"`
+	RuleName string `json:"rule_name"`
+	NodeID   string `json:"node_id"`
+	Matched  bool   `json:"matched"`
+}
+
+type EvalResult struct {
+	Result map[string]any `json:"result"`
+	Trace  []TraceEntry   `json:"trace"`
+}

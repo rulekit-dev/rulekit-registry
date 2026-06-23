@@ -32,6 +32,7 @@ type RulesetUseCase interface {
 	GetLatestVersion(ctx context.Context, workspace, key string) (*domain.Version, error)
 	GetVersionBundle(ctx context.Context, workspace, key string, versionNum int) ([]byte, error)
 	GetLatestBundle(ctx context.Context, workspace, key string) (int, []byte, error)
+	Evaluate(ctx context.Context, workspace, key string, input map[string]any) (*domain.EvalResult, error)
 }
 
 // AuthUseCase is the inbound port for authentication operations.

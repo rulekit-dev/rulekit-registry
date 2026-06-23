@@ -331,3 +331,43 @@ func (h *RulesetHandler) GetLatestBundle(w http.ResponseWriter, r *http.Request)
 	w.WriteHeader(http.StatusOK)
 	w.Write(bundleBytes) //nolint:errcheck
 }
+
+const maxEvalBodyBytes = 1 << 16 // 64 KiB
+
+func (h *RulesetHandler) Evaluate(w http.ResponseWriter, r *http.Request) {
+	key := r.PathValue("key")
+	ws, ok := WorkspaceParam(w, r)
+	if !ok {
+		return
+	}
+
+	r.Body = http.MaxBytesReader(w, r.Body, maxEvalBodyBytes)
+
+	var input map[string]any
+	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+		var maxErr *http.MaxBytesError
+		if errors.As(err, &maxErr) {
+			WriteError(w, http.StatusRequestEntityTooLarge, "REQUEST_TOO_LARGE", "request body exceeds 64 KiB limit")
+			return
+		}
+		WriteError(w, http.StatusBadRequest, "BAD_REQUEST", "invalid JSON body")
+		return
+	}
+
+	result, err := h.svc.Evaluate(r.Context(), ws, key, input)
+	if err != nil {
+		if errors.Is(err, service.ErrNotFound) {
+			WriteError(w, http.StatusNotFound, "NOT_FOUND", "no published version found")
+			return
+		}
+		var ve *service.ValidationError
+		if errors.As(err, &ve) {
+			WriteError(w, http.StatusUnprocessableEntity, "EVAL_ERROR", ve.Msg)
+			return
+		}
+		WriteError(w, http.StatusInternalServerError, "INTERNAL", "evaluation failed")
+		return
+	}
+
+	WriteJSON(w, http.StatusOK, result)
+}
