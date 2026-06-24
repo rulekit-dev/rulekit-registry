@@ -27,6 +27,7 @@ type RulesetUseCase interface {
 	DeleteDraft(ctx context.Context, workspace, key string) error
 
 	Publish(ctx context.Context, workspace, key string) (*domain.Version, error)
+	Rollback(ctx context.Context, workspace, key string, toVersion int) (*domain.Draft, error)
 	ListVersions(ctx context.Context, workspace, key string, limit, offset int) ([]*domain.Version, error)
 	GetVersion(ctx context.Context, workspace, key string, versionNum int) (*domain.Version, error)
 	GetLatestVersion(ctx context.Context, workspace, key string) (*domain.Version, error)

@@ -200,6 +200,26 @@ func (s *RulesetService) Publish(ctx context.Context, workspace, key string) (*d
 	return v, nil
 }
 
+func (s *RulesetService) Rollback(ctx context.Context, workspace, key string, toVersion int) (*domain.Draft, error) {
+	dslBytes, err := s.blobs.GetDSL(ctx, workspace, key, toVersion)
+	if err != nil {
+		slog.ErrorContext(ctx, "rollback: fetch DSL blob", "workspace", workspace, "key", key, "version", toVersion, "error", err)
+		return nil, mapErr(err)
+	}
+
+	draft := &domain.Draft{
+		Workspace:  workspace,
+		RulesetKey: key,
+		DSL:        json.RawMessage(dslBytes),
+		UpdatedAt:  time.Now().UTC(),
+	}
+	if err := s.db.UpsertDraft(ctx, draft); err != nil {
+		slog.ErrorContext(ctx, "rollback: upsert draft", "workspace", workspace, "key", key, "version", toVersion, "error", err)
+		return nil, err
+	}
+	return draft, nil
+}
+
 func (s *RulesetService) ListVersions(ctx context.Context, workspace, key string, limit, offset int) ([]*domain.Version, error) {
 	versions, err := s.db.ListVersions(ctx, workspace, key, limit, offset)
 	if err != nil {

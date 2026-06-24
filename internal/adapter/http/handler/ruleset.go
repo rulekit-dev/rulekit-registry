@@ -221,6 +221,37 @@ func (h *RulesetHandler) Publish(w http.ResponseWriter, r *http.Request) {
 	WriteJSON(w, http.StatusCreated, v)
 }
 
+func (h *RulesetHandler) Rollback(w http.ResponseWriter, r *http.Request) {
+	key := r.PathValue("key")
+	ws, ok := WorkspaceParam(w, r)
+	if !ok {
+		return
+	}
+
+	var body struct {
+		Version int `json:"version"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		WriteError(w, http.StatusBadRequest, "BAD_REQUEST", "invalid JSON body")
+		return
+	}
+	if body.Version <= 0 {
+		WriteError(w, http.StatusBadRequest, "BAD_REQUEST", "version must be a positive integer")
+		return
+	}
+
+	draft, err := h.svc.Rollback(r.Context(), ws, key, body.Version)
+	if err != nil {
+		if errors.Is(err, service.ErrNotFound) {
+			WriteError(w, http.StatusNotFound, "NOT_FOUND", "ruleset or version not found")
+			return
+		}
+		WriteError(w, http.StatusInternalServerError, "INTERNAL", "failed to rollback")
+		return
+	}
+	WriteJSON(w, http.StatusOK, draft)
+}
+
 func (h *RulesetHandler) ListVersions(w http.ResponseWriter, r *http.Request) {
 	key := r.PathValue("key")
 	ws, ok := WorkspaceParam(w, r)
