@@ -1,0 +1,6 @@
+#!/bin/sh
+set -e
+echo "pre-commit: building rulekit-registry…"
+go build ./...
+echo "pre-commit: testing rulekit-registry…"
+go test ./...

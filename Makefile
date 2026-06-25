@@ -1,4 +1,4 @@
-.PHONY: up down build logs test release
+.PHONY: up down build logs test release install-hooks
 
 # Start the registry (reads .env for all configuration).
 # Copy .env.example to .env and adjust before running.
@@ -20,6 +20,10 @@ logs:
 # Run tests locally (SQLite only, no Docker required).
 test:
 	go test ./...
+
+install-hooks:
+	git config core.hooksPath .githooks
+	chmod +x .githooks/pre-commit
 
 # Tag and push a release. Usage: make release VERSION=1.2.3
 release:
