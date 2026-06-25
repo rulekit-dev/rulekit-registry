@@ -12,6 +12,7 @@ var (
 	ErrNotFound         = errors.New("not found")
 	ErrAlreadyExists    = errors.New("already exists")
 	ErrVersionImmutable = errors.New("version already published and is immutable")
+	ErrConflict         = errors.New("conflict")
 )
 
 // mapErr translates outbound adapter errors into domain-level errors so that
@@ -24,6 +25,8 @@ func mapErr(err error) error {
 		return ErrAlreadyExists
 	case errors.Is(err, port.ErrVersionImmutable):
 		return ErrVersionImmutable
+	case errors.Is(err, port.ErrConflict):
+		return ErrConflict
 	}
 	return err
 }

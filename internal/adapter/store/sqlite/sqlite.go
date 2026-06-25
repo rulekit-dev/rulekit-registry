@@ -175,10 +175,25 @@ func (s *SQLiteStore) DeleteWorkspace(ctx context.Context, name string) error {
 	return nil
 }
 
-func (s *SQLiteStore) ListRulesets(ctx context.Context, workspace string, limit, offset int) ([]*domain.Ruleset, error) {
-	rows, err := s.db.QueryContext(ctx,
-		`SELECT workspace, key, name, description, created_at, updated_at
-         FROM rulesets WHERE workspace = ? ORDER BY key LIMIT ? OFFSET ?`, workspace, limit, offset)
+func (s *SQLiteStore) ListRulesets(ctx context.Context, workspace, search string, limit, offset int) ([]*domain.Ruleset, error) {
+	var (
+		rows *sql.Rows
+		err  error
+	)
+	if search == "" {
+		rows, err = s.db.QueryContext(ctx,
+			`SELECT workspace, key, name, description, created_at, updated_at
+             FROM rulesets WHERE workspace = ? ORDER BY key LIMIT ? OFFSET ?`,
+			workspace, limit, offset)
+	} else {
+		like := "%" + search + "%"
+		rows, err = s.db.QueryContext(ctx,
+			`SELECT workspace, key, name, description, created_at, updated_at
+             FROM rulesets WHERE workspace = ?
+             AND (LOWER(key) LIKE LOWER(?) OR LOWER(name) LIKE LOWER(?) OR LOWER(description) LIKE LOWER(?))
+             ORDER BY key LIMIT ? OFFSET ?`,
+			workspace, like, like, like, limit, offset)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -195,6 +210,55 @@ func (s *SQLiteStore) ListRulesets(ctx context.Context, workspace string, limit,
 		out = append(out, r)
 	}
 	return out, rows.Err()
+}
+
+func (s *SQLiteStore) RenameRuleset(ctx context.Context, workspace, oldKey, newKey, name, description string) (*domain.Ruleset, error) {
+	// Block rename if published versions exist
+	var count int
+	if err := s.db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM versions WHERE workspace = ? AND ruleset_key = ?`,
+		workspace, oldKey).Scan(&count); err != nil {
+		return nil, err
+	}
+	if count > 0 {
+		return nil, port.ErrConflict
+	}
+
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback() //nolint:errcheck
+
+	res, err := tx.ExecContext(ctx,
+		`UPDATE rulesets SET key = ?, name = ?, description = ?, updated_at = ?
+         WHERE workspace = ? AND key = ?`,
+		newKey, name, description, now, workspace, oldKey)
+	if err != nil {
+		if isUniqueConstraint(err) {
+			return nil, port.ErrAlreadyExists
+		}
+		return nil, err
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return nil, port.ErrNotFound
+	}
+
+	if _, err := tx.ExecContext(ctx,
+		`UPDATE drafts SET ruleset_key = ? WHERE workspace = ? AND ruleset_key = ?`,
+		newKey, workspace, oldKey); err != nil {
+		return nil, err
+	}
+
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+
+	r := &domain.Ruleset{Workspace: workspace, Key: newKey, Name: name, Description: description}
+	r.UpdatedAt, _ = time.Parse(time.RFC3339Nano, now)
+	return r, nil
 }
 
 func (s *SQLiteStore) CreateRuleset(ctx context.Context, r *domain.Ruleset) error {

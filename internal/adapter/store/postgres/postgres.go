@@ -170,10 +170,25 @@ func (s *PostgresStore) DeleteWorkspace(ctx context.Context, name string) error 
 	return nil
 }
 
-func (s *PostgresStore) ListRulesets(ctx context.Context, workspace string, limit, offset int) ([]*domain.Ruleset, error) {
-	rows, err := s.db.QueryContext(ctx,
-		`SELECT workspace, key, name, description, created_at, updated_at
-         FROM rulesets WHERE workspace = $1 ORDER BY key LIMIT $2 OFFSET $3`, workspace, limit, offset)
+func (s *PostgresStore) ListRulesets(ctx context.Context, workspace, search string, limit, offset int) ([]*domain.Ruleset, error) {
+	var (
+		rows *sql.Rows
+		err  error
+	)
+	if search == "" {
+		rows, err = s.db.QueryContext(ctx,
+			`SELECT workspace, key, name, description, created_at, updated_at
+             FROM rulesets WHERE workspace = $1 ORDER BY key LIMIT $2 OFFSET $3`,
+			workspace, limit, offset)
+	} else {
+		like := "%" + search + "%"
+		rows, err = s.db.QueryContext(ctx,
+			`SELECT workspace, key, name, description, created_at, updated_at
+             FROM rulesets WHERE workspace = $1
+             AND (key ILIKE $2 OR name ILIKE $3 OR description ILIKE $4)
+             ORDER BY key LIMIT $5 OFFSET $6`,
+			workspace, like, like, like, limit, offset)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -189,6 +204,58 @@ func (s *PostgresStore) ListRulesets(ctx context.Context, workspace string, limi
 		out = append(out, r)
 	}
 	return out, rows.Err()
+}
+
+func (s *PostgresStore) RenameRuleset(ctx context.Context, workspace, oldKey, newKey, name, description string) (*domain.Ruleset, error) {
+	var count int
+	if err := s.db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM versions WHERE workspace = $1 AND ruleset_key = $2`,
+		workspace, oldKey).Scan(&count); err != nil {
+		return nil, err
+	}
+	if count > 0 {
+		return nil, port.ErrConflict
+	}
+
+	now := time.Now().UTC()
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback() //nolint:errcheck
+
+	res, err := tx.ExecContext(ctx,
+		`UPDATE rulesets SET key = $1, name = $2, description = $3, updated_at = $4
+         WHERE workspace = $5 AND key = $6`,
+		newKey, name, description, now, workspace, oldKey)
+	if err != nil {
+		if isUniqueViolation(err) {
+			return nil, port.ErrAlreadyExists
+		}
+		return nil, err
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return nil, port.ErrNotFound
+	}
+
+	if _, err := tx.ExecContext(ctx,
+		`UPDATE drafts SET ruleset_key = $1 WHERE workspace = $2 AND ruleset_key = $3`,
+		newKey, workspace, oldKey); err != nil {
+		return nil, err
+	}
+
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+
+	return &domain.Ruleset{
+		Workspace:   workspace,
+		Key:         newKey,
+		Name:        name,
+		Description: description,
+		UpdatedAt:   now,
+	}, nil
 }
 
 func (s *PostgresStore) CreateRuleset(ctx context.Context, r *domain.Ruleset) error {

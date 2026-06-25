@@ -11,6 +11,7 @@ var (
 	ErrNotFound         = errors.New("not found")
 	ErrAlreadyExists    = errors.New("already exists")
 	ErrVersionImmutable = errors.New("version already published and is immutable")
+	ErrConflict         = errors.New("conflict")
 )
 
 type Datastore interface {
@@ -21,10 +22,11 @@ type Datastore interface {
 	DeleteWorkspace(ctx context.Context, name string) error
 
 	// Ruleset operations
-	ListRulesets(ctx context.Context, workspace string, limit, offset int) ([]*domain.Ruleset, error)
+	ListRulesets(ctx context.Context, workspace, search string, limit, offset int) ([]*domain.Ruleset, error)
 	CreateRuleset(ctx context.Context, r *domain.Ruleset) error
 	GetRuleset(ctx context.Context, workspace, key string) (*domain.Ruleset, error)
 	DeleteRuleset(ctx context.Context, workspace, key string) error
+	RenameRuleset(ctx context.Context, workspace, oldKey, newKey, name, description string) (*domain.Ruleset, error)
 
 	// Draft operations
 	GetDraft(ctx context.Context, workspace, key string) (*domain.Draft, error)

@@ -17,10 +17,11 @@ type WorkspaceUseCase interface {
 
 // RulesetUseCase is the inbound port for all ruleset operations.
 type RulesetUseCase interface {
-	ListRulesets(ctx context.Context, workspace string, limit, offset int) ([]*domain.Ruleset, error)
+	ListRulesets(ctx context.Context, workspace, search string, limit, offset int) ([]*domain.Ruleset, error)
 	CreateRuleset(ctx context.Context, workspace, key, name, description string) (*domain.Ruleset, error)
 	GetRuleset(ctx context.Context, workspace, key string) (*domain.Ruleset, error)
 	DeleteRuleset(ctx context.Context, workspace, key string) error
+	RenameRuleset(ctx context.Context, workspace, oldKey, newKey, name, description string) (*domain.Ruleset, error)
 
 	GetDraft(ctx context.Context, workspace, key string) (*domain.Draft, error)
 	UpsertDraft(ctx context.Context, workspace, key string, rawDSL json.RawMessage) (*domain.Draft, error)

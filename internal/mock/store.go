@@ -3,6 +3,7 @@ package mock
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"sync"
 
 	"github.com/rulekit-dev/rulekit-registry/internal/domain"
@@ -92,14 +93,23 @@ func (d *Datastore) DeleteWorkspace(_ context.Context, name string) error {
 	return nil
 }
 
-func (d *Datastore) ListRulesets(_ context.Context, workspace string, limit, offset int) ([]*domain.Ruleset, error) {
+func (d *Datastore) ListRulesets(_ context.Context, workspace, search string, limit, offset int) ([]*domain.Ruleset, error) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	var out []*domain.Ruleset
 	for _, rs := range d.rulesets {
-		if rs.Workspace == workspace {
-			out = append(out, rs)
+		if rs.Workspace != workspace {
+			continue
 		}
+		if search != "" {
+			sl := strings.ToLower(search)
+			if !strings.Contains(strings.ToLower(rs.Key), sl) &&
+				!strings.Contains(strings.ToLower(rs.Name), sl) &&
+				!strings.Contains(strings.ToLower(rs.Description), sl) {
+				continue
+			}
+		}
+		out = append(out, rs)
 	}
 	if offset >= len(out) {
 		return nil, nil
@@ -109,6 +119,39 @@ func (d *Datastore) ListRulesets(_ context.Context, workspace string, limit, off
 		out = out[:limit]
 	}
 	return out, nil
+}
+
+func (d *Datastore) RenameRuleset(_ context.Context, workspace, oldKey, newKey, name, description string) (*domain.Ruleset, error) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
+	ok := key(workspace, oldKey)
+	rs, exists := d.rulesets[ok]
+	if !exists {
+		return nil, port.ErrNotFound
+	}
+	if len(d.versions[ok]) > 0 {
+		return nil, port.ErrConflict
+	}
+	nk := key(workspace, newKey)
+	if _, taken := d.rulesets[nk]; taken {
+		return nil, port.ErrAlreadyExists
+	}
+
+	updated := *rs
+	updated.Key = newKey
+	updated.Name = name
+	updated.Description = description
+	delete(d.rulesets, ok)
+	d.rulesets[nk] = &updated
+
+	if draft, hasDraft := d.drafts[ok]; hasDraft {
+		draft.RulesetKey = newKey
+		d.drafts[nk] = draft
+		delete(d.drafts, ok)
+	}
+
+	return &updated, nil
 }
 
 func (d *Datastore) CreateRuleset(_ context.Context, r *domain.Ruleset) error {

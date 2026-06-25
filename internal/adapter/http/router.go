@@ -40,6 +40,7 @@ func NewRouter(h *handler.RulesetHandler, auth *handler.AuthHandler, admin *hand
 	v1.Handle("GET /v1/rulesets", requireRole(domain.RoleViewer, http.HandlerFunc(h.ListRulesets)))
 	v1.Handle("POST /v1/rulesets", requireRole(domain.RoleEditor, http.HandlerFunc(h.CreateRuleset)))
 	v1.Handle("GET /v1/rulesets/{key}", requireRole(domain.RoleViewer, http.HandlerFunc(h.GetRuleset)))
+	v1.Handle("PATCH /v1/rulesets/{key}", requireRole(domain.RoleEditor, http.HandlerFunc(h.RenameRuleset)))
 	v1.Handle("DELETE /v1/rulesets/{key}", requireRole(domain.RoleEditor, http.HandlerFunc(h.DeleteRuleset)))
 	v1.Handle("GET /v1/rulesets/{key}/draft", requireRole(domain.RoleEditor, http.HandlerFunc(h.GetDraft)))
 	v1.Handle("PUT /v1/rulesets/{key}/draft", requireRole(domain.RoleEditor, http.HandlerFunc(h.UpsertDraft)))

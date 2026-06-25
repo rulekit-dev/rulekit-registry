@@ -23,13 +23,51 @@ func (h *RulesetHandler) ListRulesets(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	search := r.URL.Query().Get("search")
 	limit, offset := PageParams(r)
-	rulesets, err := h.svc.ListRulesets(r.Context(), ws, limit, offset)
+	rulesets, err := h.svc.ListRulesets(r.Context(), ws, search, limit, offset)
 	if err != nil {
 		WriteError(w, http.StatusInternalServerError, "INTERNAL", "failed to list rulesets")
 		return
 	}
 	WriteJSON(w, http.StatusOK, rulesets)
+}
+
+func (h *RulesetHandler) RenameRuleset(w http.ResponseWriter, r *http.Request) {
+	oldKey := r.PathValue("key")
+	ws, ok := WorkspaceParam(w, r)
+	if !ok {
+		return
+	}
+	var body struct {
+		NewKey      string `json:"new_key"`
+		Name        string `json:"name"`
+		Description string `json:"description"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		WriteError(w, http.StatusBadRequest, "BAD_REQUEST", "invalid JSON body")
+		return
+	}
+	if !ValidKey(body.NewKey) {
+		WriteError(w, http.StatusBadRequest, "INVALID_KEY",
+			"new_key must be non-empty, at most 128 characters, and match [a-z0-9_-]")
+		return
+	}
+	rs, err := h.svc.RenameRuleset(r.Context(), ws, oldKey, body.NewKey, body.Name, body.Description)
+	if err != nil {
+		switch {
+		case errors.Is(err, service.ErrNotFound):
+			WriteError(w, http.StatusNotFound, "NOT_FOUND", "ruleset not found")
+		case errors.Is(err, service.ErrAlreadyExists):
+			WriteError(w, http.StatusConflict, "ALREADY_EXISTS", "a ruleset with that key already exists")
+		case errors.Is(err, service.ErrConflict):
+			WriteError(w, http.StatusConflict, "CONFLICT", "cannot rename a ruleset that has published versions")
+		default:
+			WriteError(w, http.StatusInternalServerError, "INTERNAL", "failed to rename ruleset")
+		}
+		return
+	}
+	WriteJSON(w, http.StatusOK, rs)
 }
 
 func (h *RulesetHandler) CreateRuleset(w http.ResponseWriter, r *http.Request) {

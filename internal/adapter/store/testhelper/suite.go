@@ -155,7 +155,7 @@ func RunSuite(t *testing.T, newStore func(t *testing.T) port.Datastore) {
 			}
 		}
 
-		list, err := s.ListRulesets(ctx, workspace, 50, 0)
+		list, err := s.ListRulesets(ctx, workspace, "", 50, 0)
 		if err != nil {
 			t.Fatalf("ListRulesets: %v", err)
 		}
@@ -167,6 +167,100 @@ func RunSuite(t *testing.T, newStore func(t *testing.T) port.Datastore) {
 			if r.Key != want[i] {
 				t.Errorf("list[%d].Key: got %q, want %q", i, r.Key, want[i])
 			}
+		}
+	})
+
+	t.Run("SearchRulesets", func(t *testing.T) {
+		t.Parallel()
+		s := newStore(t)
+		ctx := context.Background()
+		now := time.Now().UTC().Truncate(time.Second)
+
+		workspace := "org-search"
+		for _, rs := range []domain.Ruleset{
+			{Workspace: workspace, Key: "pricing-basic", Name: "Pricing Basic", Description: "basic tier", CreatedAt: now, UpdatedAt: now},
+			{Workspace: workspace, Key: "fraud-check", Name: "Fraud Check", Description: "detects fraud", CreatedAt: now, UpdatedAt: now},
+			{Workspace: workspace, Key: "shipping-rules", Name: "Shipping", Description: "shipping logic", CreatedAt: now, UpdatedAt: now},
+		} {
+			if err := s.CreateRuleset(ctx, &rs); err != nil {
+				t.Fatalf("CreateRuleset %q: %v", rs.Key, err)
+			}
+		}
+
+		// Search by key substring
+		got, err := s.ListRulesets(ctx, workspace, "pricing", 50, 0)
+		if err != nil {
+			t.Fatalf("ListRulesets search=pricing: %v", err)
+		}
+		if len(got) != 1 || got[0].Key != "pricing-basic" {
+			t.Errorf("search=pricing: got %v", got)
+		}
+
+		// Search by name (case-insensitive)
+		got, err = s.ListRulesets(ctx, workspace, "FRAUD", 50, 0)
+		if err != nil {
+			t.Fatalf("ListRulesets search=FRAUD: %v", err)
+		}
+		if len(got) != 1 || got[0].Key != "fraud-check" {
+			t.Errorf("search=FRAUD: got %v", got)
+		}
+
+		// Empty search returns all
+		got, err = s.ListRulesets(ctx, workspace, "", 50, 0)
+		if err != nil {
+			t.Fatalf("ListRulesets search='': %v", err)
+		}
+		if len(got) != 3 {
+			t.Errorf("search='': got %d, want 3", len(got))
+		}
+	})
+
+	t.Run("RenameRuleset", func(t *testing.T) {
+		t.Parallel()
+		s := newStore(t)
+		ctx := context.Background()
+		now := time.Now().UTC().Truncate(time.Second)
+
+		// Create a ruleset with a draft
+		if err := s.CreateRuleset(ctx, &domain.Ruleset{
+			Workspace: "ws", Key: "old-key", Name: "Old Name", CreatedAt: now, UpdatedAt: now,
+		}); err != nil {
+			t.Fatalf("CreateRuleset: %v", err)
+		}
+		if err := s.UpsertDraft(ctx, &domain.Draft{
+			Workspace: "ws", RulesetKey: "old-key", DSL: []byte(`{}`), UpdatedAt: now,
+		}); err != nil {
+			t.Fatalf("UpsertDraft: %v", err)
+		}
+
+		// Rename
+		renamed, err := s.RenameRuleset(ctx, "ws", "old-key", "new-key", "New Name", "new desc")
+		if err != nil {
+			t.Fatalf("RenameRuleset: %v", err)
+		}
+		if renamed.Key != "new-key" {
+			t.Errorf("Key: got %q, want %q", renamed.Key, "new-key")
+		}
+
+		// Old key gone, new key present
+		if _, err := s.GetRuleset(ctx, "ws", "old-key"); !errors.Is(err, port.ErrNotFound) {
+			t.Errorf("old key: got %v, want ErrNotFound", err)
+		}
+		if _, err := s.GetRuleset(ctx, "ws", "new-key"); err != nil {
+			t.Errorf("new key: %v", err)
+		}
+
+		// Draft moved to new key
+		if _, err := s.GetDraft(ctx, "ws", "new-key"); err != nil {
+			t.Errorf("draft under new key: %v", err)
+		}
+		if _, err := s.GetDraft(ctx, "ws", "old-key"); !errors.Is(err, port.ErrNotFound) {
+			t.Errorf("draft under old key: got %v, want ErrNotFound", err)
+		}
+
+		// Not found error
+		if _, err := s.RenameRuleset(ctx, "ws", "no-such", "x", "X", ""); !errors.Is(err, port.ErrNotFound) {
+			t.Errorf("missing key: got %v, want ErrNotFound", err)
 		}
 	})
 
@@ -356,7 +450,7 @@ func RunSuite(t *testing.T, newStore func(t *testing.T) port.Datastore) {
 			if r.Name != "Name in "+ws {
 				t.Errorf("Name: got %q, want %q", r.Name, "Name in "+ws)
 			}
-			list, err := s.ListRulesets(ctx, ws, 50, 0)
+			list, err := s.ListRulesets(ctx, ws, "", 50, 0)
 			if err != nil {
 				t.Fatalf("ListRulesets ws=%q: %v", ws, err)
 			}

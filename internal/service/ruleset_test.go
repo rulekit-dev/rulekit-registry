@@ -342,7 +342,7 @@ func TestGetLatestBundle(t *testing.T) {
 
 func TestListRulesetsEmpty(t *testing.T) {
 	svc, _, _ := setup(t)
-	list, err := svc.ListRulesets(context.Background(), "default", 50, 0)
+	list, err := svc.ListRulesets(context.Background(), "default", "", 50, 0)
 	if err != nil {
 		t.Fatalf("ListRulesets: %v", err)
 	}
@@ -375,8 +375,8 @@ func TestWorkspaceIsolation(t *testing.T) {
 	svc.CreateRuleset(ctx, "ws-a", "shared", "Shared", "") //nolint:errcheck
 	svc.CreateRuleset(ctx, "ws-b", "shared", "Shared", "") //nolint:errcheck
 
-	listA, _ := svc.ListRulesets(ctx, "ws-a", 50, 0)
-	listB, _ := svc.ListRulesets(ctx, "ws-b", 50, 0)
+	listA, _ := svc.ListRulesets(ctx, "ws-a", "", 50, 0)
+	listB, _ := svc.ListRulesets(ctx, "ws-b", "", 50, 0)
 
 	if len(listA) != 1 {
 		t.Errorf("ws-a: got %d rulesets, want 1", len(listA))

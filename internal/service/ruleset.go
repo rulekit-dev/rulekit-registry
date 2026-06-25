@@ -26,8 +26,8 @@ func NewRulesetService(db port.Datastore, blobs port.BlobStore) *RulesetService 
 	return &RulesetService{db: db, blobs: blobs}
 }
 
-func (s *RulesetService) ListRulesets(ctx context.Context, workspace string, limit, offset int) ([]*domain.Ruleset, error) {
-	rulesets, err := s.db.ListRulesets(ctx, workspace, limit, offset)
+func (s *RulesetService) ListRulesets(ctx context.Context, workspace, search string, limit, offset int) ([]*domain.Ruleset, error) {
+	rulesets, err := s.db.ListRulesets(ctx, workspace, search, limit, offset)
 	if err != nil {
 		slog.ErrorContext(ctx, "list rulesets", "workspace", workspace, "error", err)
 		return nil, err
@@ -36,6 +36,14 @@ func (s *RulesetService) ListRulesets(ctx context.Context, workspace string, lim
 		rulesets = []*domain.Ruleset{}
 	}
 	return rulesets, nil
+}
+
+func (s *RulesetService) RenameRuleset(ctx context.Context, workspace, oldKey, newKey, name, description string) (*domain.Ruleset, error) {
+	rs, err := s.db.RenameRuleset(ctx, workspace, oldKey, newKey, name, description)
+	if err != nil {
+		return nil, mapErr(err)
+	}
+	return rs, nil
 }
 
 func (s *RulesetService) CreateRuleset(ctx context.Context, workspace, key, name, description string) (*domain.Ruleset, error) {
